@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 #
 #
-#
+# SQL below must not contain double-quotes.
 #
 
 import subprocess as sp, shlex
@@ -18,7 +18,7 @@ NAME_TYPES = ["full", "short"]
 def main():
 
     select = (
-        "SELECT c.uuid, c.description 'Description:en', cl.name 'Dataclass', dt.name 'Datatype', "
+        "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Dataclass', dt.name 'Datatype', "
         "GROUP_CONCAT(DISTINCT source.name, ':', crt.code SEPARATOR ';') 'Same as concept mappings', "
         + ", ".join([locale_select_snippet(l) for l in LOCALES])
         + ", c_num.hi_absolute 'Absolute high'"
@@ -31,22 +31,31 @@ def main():
         ", c_num.allow_decimal 'Allow decimals'"
         ", c_num.display_precision 'Display precision'"
         ", c_cx.handler 'Complex data handler'"
+        ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ',') 'Set members' "
+        ", GROUP_CONCAT(DISTINCT ans_name.name SEPARATOR ',') 'Answers' "
     )
 
     tables = (
         "FROM concept c \n"
         "JOIN concept_class cl ON c.class_id = cl.concept_class_id \n"
         "JOIN concept_datatype dt ON c.datatype_id = dt.concept_datatype_id \n"
+        "LEFT JOIN concept_description cd_en ON c.concept_id = cd_en.concept_id AND cd_en.locale = 'en' \n"
         "JOIN concept_reference_map crm ON c.concept_id = crm.concept_id "
         "JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id "
         "JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' "
         "JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id "
         + "\n ".join([locale_join_snippet(l) for l in LOCALES])
         + " LEFT JOIN concept_numeric c_num ON c.concept_id = c_num.concept_id "
-        + " LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id "
+        "LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id "
+        "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set "
+        "LEFT JOIN concept_name set_mem_name ON c_set.concept_id = set_mem_name.concept_id "
+        "   AND set_mem_name.locale = 'en' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' "
+        "LEFT JOIN concept_answer c_ans ON c.concept_id = c_ans.concept_id "
+        "LEFT JOIN concept_name ans_name ON c_ans.answer_concept = ans_name.concept_id "
+        "   AND ans_name.locale = 'en' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' "
     )
 
-    ending = "GROUP BY c.concept_id LIMIT 2;"
+    ending = "GROUP BY c.concept_id LIMIT 10;"
 
     sql_code = select + "\n" + tables + "\n" + ending
 
