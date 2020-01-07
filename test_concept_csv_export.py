@@ -1,22 +1,18 @@
 #!/usr/bin/env pytest
 
-import csv
+from pprint import pprint
 import concept_csv_export as cce
 from collections import OrderedDict
-import os
 
 cce.DEBUG = False
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():
     limit = 10
-    os.remove(cce.TMP_FILE)
-    sql_code = cce.get_sql_code(limit, outfile=cce.TMP_FILE)
+    sql_code = cce.get_sql_code(limit)
     sql_result = cce.run_sql(sql_code)
     all_concepts = cce.sql_result_to_list_of_ordered_dicts(sql_result)
-    with open(cce.TMP_FILE, "r") as f:
-        all_concepts = list(csv.DictReader(f))
-    os.remove(cce.TMP_FILE)
+    pprint(all_concepts)
     assert all_concepts[0]["uuid"] != ""
     assert len(all_concepts) == limit
 

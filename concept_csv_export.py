@@ -6,18 +6,17 @@
 
 import csv
 from collections import OrderedDict
-import os
+from pprint import pprint
 import subprocess as sp
-import time
 from typing import Optional
 
-DEBUG = False
+DEBUG = True
 
 
 DOCKER = True
 SERVER_NAME = "ces"
 DB_NAME = "ces"
-TMP_FILE = "/var/lib/mysql-files/concept-export-" + str(int(time.time())) + ".csv"
+OUTFILE = "/home/brandon/Downloads/concepts.csv"
 
 LOCALES = ["en", "es", "fr", "ht"]
 NAME_TYPES = ["full", "short"]
@@ -30,20 +29,25 @@ def main():
     sql_code = get_sql_code(limit)
     if DEBUG:
         print(sql_code)
+        input("Press any key to continue...")
 
     print("Querying concepts...")
-    os.remove(TMP_FILE)
-    run_sql(sql_code)
+    sql_result = run_sql(sql_code)
+    if DEBUG:
+        print(sql_result)
+        input("Press any key to continue...")
     print("Parsing results...")
-    with open(TMP_FILE, "r") as f:
-        all_concepts = list(csv.DictReader(f))
-    os.remove(TMP_FILE)
+    all_concepts = sql_result_to_list_of_ordered_dicts(sql_result)
     print("  We have {} concepts".format(len(all_concepts)))
     print("Reordering...")
     ordered_concepts = move_referring_concepts_down(
         all_concepts, "Fully specified name:en"
     )
-    print(ordered_concepts)
+    print("Writing output file " + OUTFILE)
+    with open(OUTFILE, "w") as f:
+        writer = csv.DictWriter(f, ordered_concepts[0].keys())
+        writer.writeheader()
+        writer.writerows(ordered_concepts)
 
 
 def check_data_for_stop_characters():
@@ -83,9 +87,10 @@ def check_data_for_stop_characters():
             print(item)
 
 
-def get_sql_code(limit: Optional[int] = None, where="", outfile=TMP_FILE) -> str:
+def get_sql_code(limit: Optional[int] = None, where="") -> str:
     select = (
-        "SELECT c.concept_id, c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
+        "SET SESSION group_concat_max_len = 1000000; "
+        "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
         "GROUP_CONCAT(DISTINCT source.name, ':', crt.code SEPARATOR ';') 'Same as concept mappings', "
         + ", ".join([locale_select_snippet(l) for l in LOCALES])
         + ", c_num.hi_absolute 'Absolute high'"
@@ -107,31 +112,27 @@ def get_sql_code(limit: Optional[int] = None, where="", outfile=TMP_FILE) -> str
         "JOIN concept_class cl ON c.class_id = cl.concept_class_id \n"
         "JOIN concept_datatype dt ON c.datatype_id = dt.concept_datatype_id \n"
         "LEFT JOIN concept_description cd_en ON c.concept_id = cd_en.concept_id AND cd_en.locale = 'en' \n"
-        "JOIN concept_reference_map crm ON c.concept_id = crm.concept_id "
-        "JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 "
-        "JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' "
-        "JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id \n"
+        "LEFT JOIN concept_reference_map crm ON c.concept_id = crm.concept_id \n"
+        "  LEFT JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
+        "  LEFT JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
+        "  LEFT JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id \n"
         + "\n ".join([locale_join_snippet(l) for l in LOCALES])
-        + " LEFT JOIN concept_numeric c_num ON c.concept_id = c_num.concept_id "
-        "LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id "
-        "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set "
-        "  LEFT JOIN concept c_set_c ON c_set.concept_id = c_set_c.concept_id AND c_set_c.retired = 0 "  # we look up the concept to filter out the retired members
-        "  LEFT JOIN concept_name set_mem_name ON c_set_c.concept_id = set_mem_name.concept_id "
-        "    AND set_mem_name.locale = 'en' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 "
-        "LEFT JOIN concept_answer c_ans ON c.concept_id = c_ans.concept_id "
-        "  LEFT JOIN concept c_ans_c ON c_ans.answer_concept = c_ans_c.concept_id AND c_ans_c.retired = 0 "  # we look up the concept to filter out the retired answers
-        "  LEFT JOIN concept_name ans_name ON c_ans_c.concept_id = ans_name.concept_id "
-        "    AND ans_name.locale = 'en' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 "
+        + "\nLEFT JOIN concept_numeric c_num ON c.concept_id = c_num.concept_id "
+        "LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id \n"
+        "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set \n"
+        "  LEFT JOIN concept c_set_c ON c_set.concept_id = c_set_c.concept_id AND c_set_c.retired = 0 \n"  # we look up the concept to filter out the retired members
+        "  LEFT JOIN concept_name set_mem_name ON c_set_c.concept_id = set_mem_name.concept_id \n"
+        "    AND set_mem_name.locale = 'en' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 \n"
+        "LEFT JOIN concept_answer c_ans ON c.concept_id = c_ans.concept_id \n"
+        "  LEFT JOIN concept c_ans_c ON c_ans.answer_concept = c_ans_c.concept_id AND c_ans_c.retired = 0 \n"  # we look up the concept to filter out the retired answers
+        "  LEFT JOIN concept_name ans_name ON c_ans_c.concept_id = ans_name.concept_id \n"
+        "    AND ans_name.locale = 'en' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 \n"
     )
 
     ending = (
-        "WHERE c.retired = 0 {where_part} "
+        "WHERE c.retired = 0  {where_part} "
         "GROUP BY c.concept_id "
         "ORDER BY c.is_set {limit_part} "
-        "INTO OUTFILE '" + outfile + "' "
-        "FIELDS TERMINATED BY ',' "
-        "ENCLOSED BY '\\\"' "
-        "LINES TERMINATED BY '\\n' "
     ).format(
         limit_part="LIMIT {}".format(limit) if limit != None else "",
         where_part="AND {}".format(where) if where != "" else "",
@@ -206,7 +207,6 @@ def run_sql(sql_code):
     )
     if DEBUG:
         print(result.stderr)
-        print(result.stdout)
     return result.stdout
 
 
@@ -218,7 +218,12 @@ def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
     newline_text = "\n\\n"
     newline_replacement = "~~NEWLINE~~"
     sql_result = sql_result.replace(newline_text, newline_replacement)
-    sql_result = sql_result.replace("\t", newline_replacement)
+    # Quote all fields
+    sql_result = sql_result.replace('"', '""')
+    sql_result = '"' + sql_result
+    sql_result = sql_result.replace("\t", '"\t"')
+    sql_result = sql_result.replace("\n", '"\n"')
+    sql_result = sql_result[:-1]
     sql_lines = [
         l.replace(newline_replacement, newline_text) for l in sql_result.splitlines()
     ]
