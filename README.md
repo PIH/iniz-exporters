@@ -1,3 +1,4 @@
-# Concept CSV Export
+# Iniz Exporters
 
-Exports from an OpenMRS instance to a CSV.
+Utilities to generate [Initializer](https://github.com/mekomsolutions/openmrs-module-initializer)-compatible CSVs from an OpenMRS database.
+
