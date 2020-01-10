@@ -4,7 +4,9 @@ from pprint import pprint
 import concept_csv_export as cce
 from collections import OrderedDict
 
-cce.DEBUG = False
+cce.VERBOSE = False
+cce.DB_NAME = "ces"
+cce.SERVER_NAME = "ces"
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():

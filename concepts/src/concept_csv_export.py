@@ -361,6 +361,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     load_dotenv(find_dotenv(), override=True)
+    SERVER_NAME = os.getenv("SERVER_NAME")
 
     main(
         database=args.database,
