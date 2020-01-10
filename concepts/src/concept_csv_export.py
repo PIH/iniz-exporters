@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 #
-# Parameters are taken from the following sources, in order of precendence:
-#
-# - Arguments to main(), if called from external Python code
-# - Command-line arguments. See ./concept_csv_export.py --help
+# A program for exporting concepts from an OpenMRS MySQL database to
+# CSVs that can be loaded by the OpenMRS Initializer module.
 #
 # SQL below must not contain double-quotes.
 #
 
 import argparse
 import csv
+import os
 import subprocess as sp
 from typing import Optional
 
@@ -17,7 +16,7 @@ DB_NAME = None
 SERVER_NAME = None
 VERBOSE = False
 DOCKER = True
-OUTFILE = "/home/brandon/Downloads/concepts.csv"
+OUTFILE = os.path.expanduser("~/Downloads/concepts.csv")
 
 LOCALES = ["en", "es", "fr", "ht"]
 NAME_TYPES = ["full", "short"]
