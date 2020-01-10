@@ -4,35 +4,23 @@
 #
 # - Arguments to main(), if called from external Python code
 # - Command-line arguments. See ./concept_csv_export.py --help
-# - Environment variables -- DATABASE,
-# -
 #
 # SQL below must not contain double-quotes.
 #
 
 import argparse
 import csv
-import os
 import subprocess as sp
 from typing import Optional
 
-from dotenv import load_dotenv, find_dotenv
-
 DB_NAME = None
 SERVER_NAME = None
-VERBOSE = True
+VERBOSE = False
 DOCKER = True
+OUTFILE = "/home/brandon/Downloads/concepts.csv"
+
 LOCALES = ["en", "es", "fr", "ht"]
 NAME_TYPES = ["full", "short"]
-OUTFILE = os.path.expanduser("~/Downloads/concepts.csv")
-
-ENV_VAR_DB_NAME = "CCX_DATABASE"
-ENV_VAR_SERVER_NAME = "CCX_SERVER_NAME"
-ENV_VAR_VERBOSE = "CCX_VERBOSE"
-ENV_VAR_DOCKER = "CCX_DOCKER"
-ENV_VAR_LOCALES = "CCX_LOCALES"
-ENV_VAR_NAME_TYPES = "CCX_NAME_TYPES"
-ENV_VAR_OUTFILE = "CCX_OUTFILE"
 
 
 def set_globals(
@@ -311,57 +299,39 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "database",
-        help="The name of the OpenMRS MySQL database from which to pull concepts. Env var: {}".format(
-            ENV_VAR_DB_NAME
-        ),
-    )
-    parser.add_argument(
-        "-o",
-        "--output",
-        help="Path to output CSV. Env var: {}. Default: {}".format(
-            ENV_VAR_OUTFILE, OUTFILE
-        ),
+        help="The name of the OpenMRS MySQL database from which to pull concepts.",
     )
     parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
-        help="More verbose output. Env var: {}. Default: {}".format(
-            ENV_VAR_VERBOSE, VERBOSE
-        ),
+        default=VERBOSE,
+        help="More verbose output.",
     )
     parser.add_argument(
         "-d",
         "--docker",
         action="store_true",
-        help="Whether the OpenMRS MySQL database is dockerized. The container must be named 'openmrs-sdk-mysql'. Env var: {}. Default: {}".format(
-            ENV_VAR_DOCKER, DOCKER
-        ),
+        default=DOCKER,
+        help="Whether the OpenMRS MySQL database is dockerized. The container must be named 'openmrs-sdk-mysql'.",
     )
     parser.add_argument(
         "-s",
         "--server",
-        help="The name of the server. Used to fetch credentials for MySQL from openmrs-server.properties. If not provided, defaults to the database name. Env var: {}. Default: {}".format(
-            ENV_VAR_SERVER_NAME, SERVER_NAME
-        ),
+        help="The name of the server. Used to fetch credentials for MySQL from openmrs-server.properties. If not provided, defaults to the database name.",
     )
     parser.add_argument(
         "-l",
         "--locales",
-        help="A comma-separated list of locales for which to extract concept names. Env var: {}. Default: {}".format(
-            ENV_VAR_LOCALES, ",".join(LOCALES)
-        ),
+        default=",".join(LOCALES),
+        help="A comma-separated list of locales for which to extract concept names.",
     )
     parser.add_argument(
         "--name-types",
-        help="A comma-separated list of name types for which to extract concept names. Env var: {}. Default: {}".format(
-            ENV_VAR_NAME_TYPES, ",".join(NAME_TYPES)
-        ),
+        default=",".join(NAME_TYPES),
+        help="A comma-separated list of name types for which to extract concept names.",
     )
     args = parser.parse_args()
-
-    load_dotenv(find_dotenv(), override=True)
-    SERVER_NAME = os.getenv("SERVER_NAME")
 
     main(
         database=args.database,

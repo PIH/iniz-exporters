@@ -2,4 +2,4 @@ mypy
 pylint
 pytest
 pytest-watch
-python-dotenv
+ipdb
