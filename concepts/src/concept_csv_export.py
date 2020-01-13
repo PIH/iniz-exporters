@@ -9,69 +9,68 @@
 import argparse
 import csv
 import os
-import subprocess as sp
+import queue
 from typing import Optional
+import subprocess as sp
 
-DB_NAME = None
-SERVER_NAME = None
+
+# Globals
 VERBOSE = False
+
+DB_NAME = ""  # must be set before running run_sql
+SERVER_NAME = ""
 DOCKER = True
-OUTFILE = os.path.expanduser("~/Downloads/concepts.csv")
 
-LOCALES = ["en", "es", "fr", "ht"]
-NAME_TYPES = ["full", "short"]
+# Defaults
+OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
+LOCALES_DEFAULT = ["en", "es", "fr", "ht"]
+NAME_TYPES_DEFAULT = ["full", "short"]
 
 
-def set_globals(
-    database: str,
-    verbose: bool,
-    docker: bool,
-    server_name: Optional[str],
-    locales: list,
-    name_types: list,
-):
-    global DB_NAME, VERBOSE, DOCKER, SERVER_NAME, LOCALES, NAME_TYPES
-    DB_NAME = database
+def set_globals(database: str, server_name: str, verbose: bool, docker: bool):
+    global VERBOSE, DB_NAME, SERVER_NAME, DOCKER
     VERBOSE = verbose
+    DB_NAME = database
+    SERVER_NAME = server_name
     DOCKER = docker
-    SERVER_NAME = server_name if server_name else database
-    LOCALES = locales
-    NAME_TYPES = name_types
 
 
 def main(
     database: str,
-    verbose: bool = VERBOSE,
+    server_name: Optional[str],
+    set_name: Optional[str],
     docker: bool = DOCKER,
-    server_name: Optional[str] = SERVER_NAME,
-    locales: list = LOCALES,
-    name_types: list = NAME_TYPES,
+    locales: list = LOCALES_DEFAULT,
+    name_types: list = NAME_TYPES_DEFAULT,
+    outfile: str = "",  # default is set in the function
+    verbose: bool = VERBOSE,
 ):
-
-    set_globals(database, verbose, docker, server_name, locales, name_types)
+    set_globals(
+        database=database,
+        server_name=server_name or database,
+        verbose=verbose,
+        docker=docker,
+    )
+    if not outfile:
+        outfile = (
+            OUTFILE_DEFAULT_BASENAME
+            + ("-" + squish_name(set_name) if set_name else "")
+            + ".csv"
+        )
 
     check_data_for_stop_characters()
 
-    limit = None
-    sql_code = get_sql_code(limit)
-    if VERBOSE:
-        print(sql_code)
-        input("Press any key to continue...")
-
-    print("Querying concepts...")
-    sql_result = run_sql(sql_code)
-    if VERBOSE:
-        print(sql_result)
-        input("Press any key to continue...")
-    print("Parsing results...")
-    all_concepts = sql_result_to_list_of_ordered_dicts(sql_result)
-    print("  We have {} concepts".format(len(all_concepts)))
+    limit = None  # just here in case needed for experimenting
+    all_concepts = get_all_concepts(locales=locales, name_types=name_types, limit=limit)
+    print("  There are {} total concepts".format(len(all_concepts)))
+    if set_name:
+        concepts = get_all_concepts_in_tree(all_concepts, set_name)
+    else:
+        concepts = all_concepts
     print("Reordering...")
-    ordered_concepts = move_referring_concepts_down(
-        all_concepts, "Fully specified name:en"
-    )
-    print("Writing output file " + OUTFILE)
-    with open(OUTFILE, "w") as f:
+    ordered_concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
+    print("Writing output file " + outfile)
+    with open(outfile, "w") as f:
         writer = csv.DictWriter(f, ordered_concepts[0].keys())
         writer.writeheader()
         writer.writerows(ordered_concepts)
@@ -114,12 +113,66 @@ def check_data_for_stop_characters():
             print(item)
 
 
-def get_sql_code(limit: Optional[int] = None, where="") -> str:
+def get_all_concepts(locales: list, name_types: list, limit: Optional[int]) -> list:
+    sql_code = get_sql_code(locales=locales, name_types=name_types, limit=limit)
+    if VERBOSE:
+        print(sql_code)
+        input("Press any key to continue...")
+
+    print("Querying concepts...")
+    sql_result = run_sql(sql_code)
+    if VERBOSE:
+        print(sql_result)
+        input("Press any key to continue...")
+    print("Parsing results...")
+    all_concepts = sql_result_to_list_of_ordered_dicts(sql_result)
+    return all_concepts
+
+
+def get_sql_code(
+    locales: list, name_types: list, limit: Optional[int] = None, where: str = ""
+) -> str:
+    def locale_select_snippet(name_types: list, locale: str):
+        name_type_iniz_names = {"full": "Fully specified name", "short": "Short name"}
+
+        snippets = []
+        for name_type in name_types:
+            snippets.append(
+                " cn_{l}_{t}.name '{iniz_name}:{l}' ".format(
+                    l=locale, t=name_type, iniz_name=name_type_iniz_names[name_type]
+                )
+            )
+        return ", ".join(snippets)
+
+    def locale_join_snippet(name_types: list, locale: str):
+        name_type_sql_names = {"full": "FULLY_SPECIFIED", "short": "SHORT"}
+
+        snippets = []
+        for name_type in name_types:
+            snippets.append(
+                " {join_type} JOIN concept_name cn_{l}_{t} "
+                "ON c.concept_id = cn_{l}_{t}.concept_id "
+                "AND cn_{l}_{t}.locale = '{l}' "
+                "AND cn_{l}_{t}.concept_name_type = '{sql_name}' "
+                "AND cn_{l}_{t}.voided = 0".format(
+                    join_type=(
+                        "" if name_type == "full" and locale == "en" else "LEFT"
+                    ),
+                    l=locale,
+                    t=name_type,
+                    sql_name=name_type_sql_names[name_type],
+                )
+            )
+
+        return "\n    ".join(snippets)
+
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
         "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
         "GROUP_CONCAT(DISTINCT source.name, ':', crt.code SEPARATOR ';') 'Same as concept mappings', "
-        + ", ".join([locale_select_snippet(l) for l in LOCALES])
+        + ", ".join(
+            [locale_select_snippet(name_types=name_types, locale=l) for l in locales]
+        )
         + ", c_num.hi_absolute 'Absolute high'"
         ", c_num.hi_critical 'Critical high'"
         ", c_num.hi_normal 'Normal high'"
@@ -143,7 +196,9 @@ def get_sql_code(limit: Optional[int] = None, where="") -> str:
         "  LEFT JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
         "  LEFT JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
         "  LEFT JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id \n"
-        + "\n ".join([locale_join_snippet(l) for l in LOCALES])
+        + "\n ".join(
+            [locale_join_snippet(name_types=name_types, locale=l) for l in locales]
+        )
         + "\nLEFT JOIN concept_numeric c_num ON c.concept_id = c_num.concept_id "
         "LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id \n"
         "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set \n"
@@ -169,92 +224,24 @@ def get_sql_code(limit: Optional[int] = None, where="") -> str:
     return sql_code
 
 
-def locale_select_snippet(locale):
-    name_type_iniz_names = {"full": "Fully specified name", "short": "Short name"}
-
-    snippets = []
-    for name_type in NAME_TYPES:
-        snippets.append(
-            " cn_{l}_{t}.name '{iniz_name}:{l}' ".format(
-                l=locale, t=name_type, iniz_name=name_type_iniz_names[name_type]
-            )
-        )
-    return ", ".join(snippets)
-
-
-def locale_join_snippet(locale):
-    name_type_sql_names = {"full": "FULLY_SPECIFIED", "short": "SHORT"}
-
-    snippets = []
-    for name_type in NAME_TYPES:
-        snippets.append(
-            " {join_type} JOIN concept_name cn_{l}_{t} "
-            "ON c.concept_id = cn_{l}_{t}.concept_id "
-            "AND cn_{l}_{t}.locale = '{l}' "
-            "AND cn_{l}_{t}.concept_name_type = '{sql_name}' "
-            "AND cn_{l}_{t}.voided = 0".format(
-                join_type=("" if name_type == "full" and locale == "en" else "LEFT"),
-                l=locale,
-                t=name_type,
-                sql_name=name_type_sql_names[name_type],
-            )
-        )
-
-    return "\n    ".join(snippets)
-
-
-def run_sql(sql_code):
-    """ The SQL code composed must not contain double-quotes (") """
-
-    mysql_args = '-e "{}"'.format(sql_code)
-
-    root_pass = get_command_output(
-        "grep connection.password ~/openmrs/"
-        + SERVER_NAME
-        + '/openmrs-server.properties | cut -f2 -d"="'
-    )
-
-    command = "mysql -u root --password='{}' {} {}".format(
-        root_pass, mysql_args, DB_NAME
-    )
-
-    if DOCKER:
-        container_id = get_command_output(
-            "docker ps | grep openmrs-sdk-mysql | cut -f1 -d' '"
-        )
-        command = "docker exec {} {}".format(container_id, command)
-
-    result = sp.run(
-        command,
-        stdout=sp.PIPE,
-        stderr=sp.PIPE,
-        check=True,
-        shell=True,
-        encoding="latin-1",
-    )
-    if VERBOSE:
-        print(result.stderr)
-    return result.stdout
-
-
-def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
-    # TODO: this replacement should be regex that looks for whitespace around NULL
-    #   otherwise we might accidentally replace some part of a field that includes the
-    #   string literal "NULL" for whatever reason
-    sql_result = sql_result.replace("NULL", "")
-    newline_text = "\n\\n"
-    newline_replacement = "~~NEWLINE~~"
-    sql_result = sql_result.replace(newline_text, newline_replacement)
-    # Quote all fields
-    sql_result = sql_result.replace('"', '""')
-    sql_result = '"' + sql_result
-    sql_result = sql_result.replace("\t", '"\t"')
-    sql_result = sql_result.replace("\n", '"\n"')
-    sql_result = sql_result[:-1]
-    sql_lines = [
-        l.replace(newline_replacement, newline_text) for l in sql_result.splitlines()
-    ]
-    return list(csv.DictReader(sql_lines, delimiter="\t"))
+def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
+    concept_ids_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
+    concept_ids_to_add.put(set_name)
+    concepts_in_tree = []
+    all_concepts_by_name = {c["Fully specified name:en"]: c for c in all_concepts}
+    while True:
+        try:
+            concept_name = concept_ids_to_add.get_nowait()
+        except queue.Empty:
+            break
+        concept = all_concepts_by_name[concept_name]
+        concepts_in_tree.append(concept)
+        members = concept["Members"].split(";")
+        answers = concept["Answers"].split(";")
+        for name in members + answers:
+            if name != "":
+                concept_ids_to_add.put(name)
+    return concepts_in_tree
 
 
 def move_referring_concepts_down(concepts: list, key: str) -> list:
@@ -286,6 +273,40 @@ def move_referring_concepts_down(concepts: list, key: str) -> list:
     return ordered_concepts
 
 
+def run_sql(sql_code: str) -> str:
+    """ The SQL code composed must not contain double-quotes (") """
+
+    mysql_args = '-e "{}"'.format(sql_code)
+
+    root_pass = get_command_output(
+        "grep connection.password ~/openmrs/"
+        + (SERVER_NAME or DB_NAME)
+        + '/openmrs-server.properties | cut -f2 -d"="'
+    )
+
+    command = "mysql -u root --password='{}' {} {}".format(
+        root_pass, mysql_args, DB_NAME
+    )
+
+    if DOCKER:
+        container_id = get_command_output(
+            "docker ps | grep openmrs-sdk-mysql | cut -f1 -d' '"
+        )
+        command = "docker exec {} {}".format(container_id, command)
+
+    result = sp.run(
+        command,
+        stdout=sp.PIPE,
+        stderr=sp.PIPE,
+        check=True,
+        shell=True,
+        encoding="latin-1",
+    )
+    if VERBOSE:
+        print(result.stderr)
+    return result.stdout
+
+
 def get_command_output(command):
     result = sp.run(
         command, capture_output=True, check=True, shell=True, encoding="utf8"
@@ -294,11 +315,48 @@ def get_command_output(command):
     return line
 
 
+def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
+    # TODO: this replacement should be regex that looks for whitespace around NULL
+    #   otherwise we might accidentally replace some part of a field that includes the
+    #   string literal "NULL" for whatever reason
+    sql_result = sql_result.replace("NULL", "")
+    newline_text = "\n\\n"
+    newline_replacement = "~~NEWLINE~~"
+    sql_result = sql_result.replace(newline_text, newline_replacement)
+    # Quote all fields
+    sql_result = sql_result.replace('"', '""')
+    sql_result = '"' + sql_result
+    sql_result = sql_result.replace("\t", '"\t"')
+    sql_result = sql_result.replace("\n", '"\n"')
+    sql_result = sql_result[:-1]
+    sql_lines = [
+        l.replace(newline_replacement, newline_text) for l in sql_result.splitlines()
+    ]
+    return list(csv.DictReader(sql_lines, delimiter="\t"))
+
+
+def squish_name(name: str):
+    return name.replace(" ", "-")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "database",
         help="The name of the OpenMRS MySQL database from which to pull concepts.",
+    )
+    parser.add_argument(
+        "-o",
+        "--outfile",
+        help="The path of the CSV file to write. If -c (--concept-set) is provided, the set ID is appended to the default file name. Default: {}".format(
+            OUTFILE_DEFAULT_BASENAME + ".csv"
+        ),
+    )
+    parser.add_argument(
+        "-c",
+        "--set-name",
+        nargs="+",
+        help="The fully specified English name of a concept set for which to pull concepts.",
     )
     parser.add_argument(
         "-v",
@@ -322,21 +380,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "-l",
         "--locales",
-        default=",".join(LOCALES),
+        default=",".join(LOCALES_DEFAULT),
         help="A comma-separated list of locales for which to extract concept names.",
     )
     parser.add_argument(
         "--name-types",
-        default=",".join(NAME_TYPES),
+        default=",".join(NAME_TYPES_DEFAULT),
         help="A comma-separated list of name types for which to extract concept names.",
     )
     args = parser.parse_args()
 
     main(
         database=args.database,
+        server_name=args.server if args.server else args.database,
+        set_name=" ".join(args.set_name) if args.set_name else None,
+        outfile=args.outfile,
         verbose=args.verbose,
         docker=args.docker,
-        server_name=args.server if args.server else args.database,
         locales=args.locales.split(","),
         name_types=args.name_types.split(","),
     )
