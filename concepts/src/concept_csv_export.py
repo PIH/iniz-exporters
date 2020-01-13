@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 #
-# A program for exporting concepts from an OpenMRS MySQL database to
-# CSVs that can be loaded by the OpenMRS Initializer module.
-#
-# SQL below must not contain double-quotes.
+# Pulls all of the concept data from the database and works on it
+# in-memory. This ends up being quite fast, but could be a problem
+# for a large concept database and constrained memory.
 #
 
 import argparse
@@ -12,6 +11,11 @@ import os
 import queue
 from typing import Optional
 import subprocess as sp
+
+DESCRIPTION = """
+A program for exporting concepts from an OpenMRS MySQL database to
+CSVs that can be loaded by the OpenMRS Initializer module.
+"""
 
 
 # Globals
@@ -77,6 +81,10 @@ def main(
 
 
 def check_data_for_stop_characters():
+    """ Warns the user if, for fields that can be stored in CSV with multiple
+        values with some delimiter, some entry for that field contains the
+        delimiter.
+    """
     crt_query = (
         "SELECT crt.concept_reference_term_id, crs.name, crt.code "
         "FROM concept_reference_term crt "
@@ -114,6 +122,7 @@ def check_data_for_stop_characters():
 
 
 def get_all_concepts(locales: list, name_types: list, limit: Optional[int]) -> list:
+    """ Queries all concepts from the database and sticks them into a list. """
     sql_code = get_sql_code(locales=locales, name_types=name_types, limit=limit)
     if VERBOSE:
         print(sql_code)
@@ -132,6 +141,8 @@ def get_all_concepts(locales: list, name_types: list, limit: Optional[int]) -> l
 def get_sql_code(
     locales: list, name_types: list, limit: Optional[int] = None, where: str = ""
 ) -> str:
+    """ Produces the SQL query to run to get all the concepts. """
+
     def locale_select_snippet(name_types: list, locale: str):
         name_type_iniz_names = {"full": "Fully specified name", "short": "Short name"}
 
@@ -225,6 +236,10 @@ def get_sql_code(
 
 
 def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
+    """ Filters a list of concepts for decendants of set_name
+
+    "Descendants" means answers and set members (or members of members, etc.)
+    """
     concept_ids_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
     concept_ids_to_add.put(set_name)
     concepts_in_tree = []
@@ -245,8 +260,10 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
 
 
 def move_referring_concepts_down(concepts: list, key: str) -> list:
-    # We keep a dict for the order
-    # the values in the order dict do not have to be sequential
+    """ Moves concepts below their answers or set members """
+
+    # We keep a dict for the order. The values in the order dict do not
+    # have to be sequential.
     concept_order = {c[key]: float(i) for i, c in enumerate(concepts)}
     needs_more_ordering = True
     count = 0
@@ -274,7 +291,19 @@ def move_referring_concepts_down(concepts: list, key: str) -> list:
 
 
 def run_sql(sql_code: str) -> str:
-    """ The SQL code composed must not contain double-quotes (") """
+    """ Connects to the database and runs the given SQL code.
+
+    Globals:
+        DB_NAME: str
+            The name of the database.
+        SERVER_NAME: str
+            The name of the server. Defaults to DB_NAME. Is used to look up
+            the password for the mysql root user.
+        DOCKER: bool
+            Whether or not the MySQL database is in a docker container.
+
+    The SQL code composed must not contain double-quotes (")
+    """
 
     mysql_args = '-e "{}"'.format(sql_code)
 
@@ -336,11 +365,12 @@ def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
 
 
 def squish_name(name: str):
+    """ Takes a string with spaces and makes it more appropriate for a filename """
     return name.replace(" ", "-")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument(
         "database",
         help="The name of the OpenMRS MySQL database from which to pull concepts.",
@@ -356,7 +386,7 @@ if __name__ == "__main__":
         "-c",
         "--set-name",
         nargs="+",
-        help="The fully specified English name of a concept set for which to pull concepts.",
+        help="The fully specified English name of a concept set for which to pull concepts. By default, all concepts are exported into one CSV file.",
     )
     parser.add_argument(
         "-v",
