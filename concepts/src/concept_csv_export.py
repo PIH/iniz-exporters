@@ -9,7 +9,8 @@ import argparse
 import csv
 import os
 import queue
-from typing import Optional
+from typing import List, Optional
+from collections import OrderedDict
 import subprocess as sp
 
 DESCRIPTION = """
@@ -20,7 +21,6 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 
 # Globals
 VERBOSE = False
-
 DB_NAME = ""  # must be set before running run_sql
 SERVER_NAME = ""
 DOCKER = True
@@ -29,6 +29,9 @@ DOCKER = True
 OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
 LOCALES_DEFAULT = ["en", "es", "fr", "ht"]
 NAME_TYPES_DEFAULT = ["full", "short"]
+
+# Constants
+NAME_TYPE_INIZ_NAMES = {"full": "Fully specified name", "short": "Short name"}
 
 
 def set_globals(database: str, server_name: str, verbose: bool, docker: bool):
@@ -75,7 +78,8 @@ def main(
     ordered_concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
     print("Writing output file " + outfile)
     with open(outfile, "w") as f:
-        writer = csv.DictWriter(f, ordered_concepts[0].keys())
+        keys = get_columns(locales, name_types, ordered_concepts)
+        writer = csv.DictWriter(f, keys)
         writer.writeheader()
         writer.writerows(ordered_concepts)
 
@@ -144,13 +148,12 @@ def get_sql_code(
     """ Produces the SQL query to run to get all the concepts. """
 
     def locale_select_snippet(name_types: list, locale: str):
-        name_type_iniz_names = {"full": "Fully specified name", "short": "Short name"}
 
         snippets = []
         for name_type in name_types:
             snippets.append(
                 " cn_{l}_{t}.name '{iniz_name}:{l}' ".format(
-                    l=locale, t=name_type, iniz_name=name_type_iniz_names[name_type]
+                    l=locale, t=name_type, iniz_name=NAME_TYPE_INIZ_NAMES[name_type]
                 )
             )
         return ", ".join(snippets)
@@ -367,6 +370,35 @@ def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
 def squish_name(name: str):
     """ Takes a string with spaces and makes it more appropriate for a filename """
     return name.replace(" ", "-")
+
+
+def get_columns(
+    locales: List[str], name_types: List[str], concepts: List[OrderedDict]
+) -> List[str]:
+    names = name_column_headers(locales, name_types)
+    keys = (
+        ["uuid", "Void/Retire"]
+        + [names[0]]
+        + [
+            "Description:en",
+            "Data class",
+            "Data type",
+            "Answers",
+            "Members",
+            "Same as concept mappings",
+        ]
+        + names[1:]
+    )
+    other_keys = [k for k in concepts[0].keys() if k not in keys]
+    return keys + other_keys
+
+
+def name_column_headers(locales: List[str], name_types: List[str]) -> List[str]:
+    return [
+        "{nt_long}:{l}".format(nt_long=NAME_TYPE_INIZ_NAMES[nt], l=l)
+        for l in locales
+        for nt in name_types
+    ]
 
 
 if __name__ == "__main__":
