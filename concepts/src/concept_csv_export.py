@@ -283,9 +283,17 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     """
     concept_ids_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
     concept_ids_to_add.put(set_name)
-    concepts_in_tree = []
+    concepts_in_tree: List[OrderedDict] = []
     all_concepts_by_name = {c["Fully specified name:en"]: c for c in all_concepts}
+    iteration = 0
     while True:
+        if VERBOSE:
+            iteration += 1
+            print(
+                "Iteration {}. {} concepts in tree.".format(
+                    iteration, len(concepts_in_tree)
+                )
+            )
         try:
             concept_name = concept_ids_to_add.get_nowait()
         except queue.Empty:
