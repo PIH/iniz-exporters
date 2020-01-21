@@ -22,11 +22,11 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 # Globals
 VERBOSE = False
 DOCKER = False
+VERSION = 2.3
 # These must be set before running run_sql
 DB_NAME = ""
 USER = ""
 PASSWORD = ""
-
 # Defaults
 OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
 LOCALES_DEFAULT = ["en", "es", "fr", "ht"]
@@ -43,11 +43,13 @@ def set_globals(
     runtime_properties_path: Optional[str],
     user: Optional[str],
     password: Optional[str],
+    version: float,
 ):
-    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD
+    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION
     VERBOSE = verbose
     DB_NAME = database
     DOCKER = docker
+    VERSION = version
 
     USER = user or get_command_output(
         'grep connection.username {} | cut -f2 -d"="'.format(
@@ -81,6 +83,7 @@ def main(
     runtime_properties_path: Optional[str] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
+    version: float = VERSION,
 ):
     set_globals(
         database=database,
@@ -89,6 +92,7 @@ def main(
         runtime_properties_path=runtime_properties_path,
         user=user,
         password=password,
+        version=version,
     )
     if not outfile:
         outfile = (
@@ -226,8 +230,10 @@ def get_sql_code(
         ", c_num.low_critical 'Critical low'"
         ", c_num.low_normal 'Normal low'"
         ", c_num.units 'Units'"
-        ", c_num.allow_decimal 'Allow decimals'"
         ", c_num.display_precision 'Display precision'"
+        ", c_num."
+        + ("allow_decimal" if VERSION >= 2.0 else "precise")
+        + " 'Allow decimals'"
         ", c_cx.handler 'Complex data handler'"
         ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ';') 'Members' "
         ", GROUP_CONCAT(DISTINCT ans_name.name SEPARATOR ';') 'Answers' "
@@ -456,9 +462,10 @@ if __name__ == "__main__":
         help="Whether the OpenMRS MySQL database is dockerized. The container must be named 'openmrs-sdk-mysql'.",
     )
     parser.add_argument(
-        "-s",
-        "--server",
-        help="The name of the server. Used to fetch credentials for MySQL from openmrs-server.properties. If not provided, defaults to the database name.",
+        "--version",
+        type=float,
+        default=VERSION,
+        help="The OpenMRS version for which we are querying the database.",
     )
     parser.add_argument(
         "-l",
@@ -499,4 +506,5 @@ if __name__ == "__main__":
         user=args.user,
         password=args.password,
         runtime_properties_path=args.props_path,
+        version=args.version,
     )
