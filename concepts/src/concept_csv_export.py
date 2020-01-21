@@ -281,9 +281,10 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
 
     "Descendants" means answers and set members (or members of members, etc.)
     """
-    concept_ids_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
-    concept_ids_to_add.put(set_name)
+    concept_names_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
+    concept_names_to_add.put(set_name)
     concepts_in_tree: List[OrderedDict] = []
+    concept_names_in_tree: set = set()
     all_concepts_by_name = {c["Fully specified name:en"]: c for c in all_concepts}
     iteration = 0
     while True:
@@ -295,16 +296,17 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
                 )
             )
         try:
-            concept_name = concept_ids_to_add.get_nowait()
+            concept_name = concept_names_to_add.get_nowait()
         except queue.Empty:
             break
         concept = all_concepts_by_name[concept_name]
         concepts_in_tree.append(concept)
+        concept_names_in_tree.add(concept_name)
         members = concept["Members"].split(";")
         answers = concept["Answers"].split(";")
         for name in members + answers:
-            if name != "":
-                concept_ids_to_add.put(name)
+            if name != "" and name not in concept_names_in_tree:
+                concept_names_to_add.put(name)
     return concepts_in_tree
 
 
