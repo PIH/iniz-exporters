@@ -21,9 +21,11 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 
 # Globals
 VERBOSE = False
-DB_NAME = ""  # must be set before running run_sql
-SERVER_NAME = ""
-DOCKER = True
+DOCKER = False
+# These must be set before running run_sql
+DB_NAME = ""
+USER = ""
+PASSWORD = ""
 
 # Defaults
 OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
@@ -34,29 +36,59 @@ NAME_TYPES_DEFAULT = ["full", "short"]
 NAME_TYPE_INIZ_NAMES = {"full": "Fully specified name", "short": "Short name"}
 
 
-def set_globals(database: str, server_name: str, verbose: bool, docker: bool):
-    global VERBOSE, DB_NAME, SERVER_NAME, DOCKER
+def set_globals(
+    database: str,
+    verbose: bool,
+    docker: bool,
+    runtime_properties_path: Optional[str],
+    user: Optional[str],
+    password: Optional[str],
+):
+    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD
     VERBOSE = verbose
     DB_NAME = database
-    SERVER_NAME = server_name
     DOCKER = docker
+
+    USER = user or get_command_output(
+        'grep connection.username {} | cut -f2 -d"="'.format(
+            runtime_properties_path
+            or ("~/openmrs/" + DB_NAME + "/openmrs-runtime.properties")
+        )
+    )
+    assert (
+        USER != ""
+    ), "Failed to extract connection.username from openmrs-runtime.properties, and it was not provided"
+
+    PASSWORD = password or get_command_output(
+        'grep connection.password {} | cut -f2 -d"="'.format(
+            runtime_properties_path
+            or "~/openmrs/" + DB_NAME + "/openmrs-runtime.properties"
+        )
+    )
+    assert (
+        PASSWORD != ""
+    ), "Failed to extract connection.password from openmrs-runtime.properties, and it was not provided"
 
 
 def main(
     database: str,
-    server_name: Optional[str],
     set_name: Optional[str],
     docker: bool = DOCKER,
     locales: list = LOCALES_DEFAULT,
     name_types: list = NAME_TYPES_DEFAULT,
     outfile: str = "",  # default is set in the function
     verbose: bool = VERBOSE,
+    runtime_properties_path: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
 ):
     set_globals(
         database=database,
-        server_name=server_name or database,
         verbose=verbose,
         docker=docker,
+        runtime_properties_path=runtime_properties_path,
+        user=user,
+        password=password,
     )
     if not outfile:
         outfile = (
@@ -299,9 +331,10 @@ def run_sql(sql_code: str) -> str:
     Globals:
         DB_NAME: str
             The name of the database.
-        SERVER_NAME: str
-            The name of the server. Defaults to DB_NAME. Is used to look up
-            the password for the mysql root user.
+        USER: str
+            The username to use to log into the database.
+        PASSWORD: str
+            The password to use to log into the database.
         DOCKER: bool
             Whether or not the MySQL database is in a docker container.
 
@@ -310,14 +343,8 @@ def run_sql(sql_code: str) -> str:
 
     mysql_args = '-e "{}"'.format(sql_code)
 
-    root_pass = get_command_output(
-        "grep connection.password ~/openmrs/"
-        + (SERVER_NAME or DB_NAME)
-        + '/openmrs-server.properties | cut -f2 -d"="'
-    )
-
-    command = "mysql -u root --password='{}' {} {}".format(
-        root_pass, mysql_args, DB_NAME
+    command = "mysql -u {} --password='{}' {} {}".format(
+        USER, PASSWORD, mysql_args, DB_NAME
     )
 
     if DOCKER:
@@ -326,23 +353,17 @@ def run_sql(sql_code: str) -> str:
         )
         command = "docker exec {} {}".format(container_id, command)
 
-    result = sp.run(
-        command,
-        stdout=sp.PIPE,
-        stderr=sp.PIPE,
-        check=True,
-        shell=True,
-        encoding="latin-1",
-    )
-    if VERBOSE:
-        print(result.stderr)
-    return result.stdout
+    return get_command_output(command)
 
 
 def get_command_output(command):
-    result = sp.run(
-        command, capture_output=True, check=True, shell=True, encoding="utf8"
-    )
+    result = sp.run(command, capture_output=True, shell=True, encoding="latin-1")
+    if result.returncode != 0:
+        raise Exception(
+            "Command {}\nexited {}. Stderr:\n{}".format(
+                command, result.returncode, result.stderr
+            )
+        )
     line = result.stdout.strip()
     return line
 
@@ -450,15 +471,32 @@ if __name__ == "__main__":
         default=",".join(NAME_TYPES_DEFAULT),
         help="A comma-separated list of name types for which to extract concept names.",
     )
+    parser.add_argument(
+        "-r",
+        "--props-path",
+        help="The path to the openmrs-runtime.properties file. Used for extracting username and password. Defaults to ~/openmrs/<database>/openmrs-runtime.properties.",
+    )
+    parser.add_argument(
+        "-u",
+        "--user",
+        help="The username for the database. Defaults to the one stored in openmrs-runtime.properties.",
+    )
+    parser.add_argument(
+        "-p",
+        "--password",
+        help="The password for the database. Defaults to the one stored in openmrs-runtime.properties.",
+    )
     args = parser.parse_args()
 
     main(
         database=args.database,
-        server_name=args.server if args.server else args.database,
         set_name=" ".join(args.set_name) if args.set_name else None,
         outfile=args.outfile,
         verbose=args.verbose,
         docker=args.docker,
         locales=args.locales.split(","),
         name_types=args.name_types.split(","),
+        user=args.user,
+        password=args.password,
+        runtime_properties_path=args.props_path,
     )
