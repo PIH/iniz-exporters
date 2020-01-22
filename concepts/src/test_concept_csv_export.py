@@ -3,11 +3,13 @@
 from pprint import pprint
 import concept_csv_export as cce
 from concept_csv_export import (
+    set_globals,
     get_sql_code,
     move_referring_concepts_down,
     run_sql,
     sql_result_to_list_of_ordered_dicts,
     get_all_concepts_in_tree,
+    detect_cycles,
 )
 from collections import OrderedDict
 
@@ -15,6 +17,16 @@ NAME_TYPES = ["full", "short"]
 LOCALES = ["en", "es", "fr", "ht"]
 
 cce.DB_NAME = "ces"
+cce.DOCKER = True
+set_globals(
+    database="ces",
+    verbose=False,
+    docker=True,
+    runtime_properties_path=None,
+    user=None,
+    password=None,
+    version=2.3,
+)
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():
@@ -64,3 +76,21 @@ def test_get_all_concepts_in_tree():
 
     d_tree_concepts = set([c[key] for c in get_all_concepts_in_tree(concepts, "d")])
     assert d_tree_concepts == set(["d"])
+
+
+def test_detect_cycles():
+    key = "Fully specified name:en"
+    concepts = [
+        OrderedDict([(key, "a"), ("Answers", ""), ("Members", "b;c")]),
+        OrderedDict([(key, "b"), ("Answers", ""), ("Members", "")]),
+        OrderedDict([(key, "c"), ("Answers", "d;e"), ("Members", "")]),
+        OrderedDict([(key, "d"), ("Answers", "e;f"), ("Members", "")]),
+        OrderedDict([(key, "e"), ("Answers", ""), ("Members", "")]),
+        OrderedDict([(key, "f"), ("Answers", "c;e"), ("Members", "")]),
+    ]
+    try:
+        detect_cycles(concepts)
+        assert False, "detect_cycles should have detected the cycle c-d-f-c"
+    except Exception as e:
+        assert "c --> d --> f --> c" in str(e)
+        assert str(e).count("\n\t") == 1  # only should print one cycle

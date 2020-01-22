@@ -9,7 +9,7 @@ import argparse
 import csv
 import os
 import queue
-from typing import List, Optional
+from typing import List, Set, Tuple, Optional
 from collections import OrderedDict
 import subprocess as sp
 
@@ -38,13 +38,17 @@ NAME_TYPE_INIZ_NAMES = {"full": "Fully specified name", "short": "Short name"}
 
 def set_globals(
     database: str,
-    verbose: bool,
-    docker: bool,
-    runtime_properties_path: Optional[str],
-    user: Optional[str],
-    password: Optional[str],
-    version: float,
+    verbose: bool = VERBOSE,
+    docker: bool = DOCKER,
+    runtime_properties_path: Optional[str] = None,
+    user: Optional[str] = None,
+    password: Optional[str] = None,
+    version: float = VERSION,
 ):
+    """
+    Initializes the global variables used in this script.
+    Defaults are as described in `concept_csv_export.py --help`.
+    """
     global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION
     VERBOSE = verbose
     DB_NAME = database
@@ -110,6 +114,7 @@ def main(
         concepts = get_all_concepts_in_tree(all_concepts, set_name)
     else:
         concepts = all_concepts
+    detect_cycles(concepts)
     print("Reordering...")
     ordered_concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
     print("Writing output file " + outfile)
@@ -280,38 +285,84 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     """ Filters a list of concepts for decendants of set_name
 
     "Descendants" means answers and set members (or members of members, etc.)
+
+    Also checks for dependency cycles. Throws a list of concepts involved
+    in cycles at the end, if there are any.
     """
+    key = "Fully specified name:en"
+    all_concepts_by_name = {c[key]: c for c in all_concepts}
     concept_names_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
     concept_names_to_add.put(set_name)
-    concepts_in_tree: List[OrderedDict] = []
-    concept_names_in_tree: set = set()
-    all_concepts_by_name = {c["Fully specified name:en"]: c for c in all_concepts}
+    concept_names_in_tree: Set[str] = set()
     iteration = 0
     while True:
         if VERBOSE:
             iteration += 1
             print(
                 "Iteration {}. {} concepts in tree.".format(
-                    iteration, len(concepts_in_tree)
+                    iteration, len(concept_names_in_tree)
                 )
             )
         try:
             concept_name = concept_names_to_add.get_nowait()
         except queue.Empty:
             break
-        concept = all_concepts_by_name[concept_name]
-        concepts_in_tree.append(concept)
         concept_names_in_tree.add(concept_name)
+        concept = all_concepts_by_name[concept_name]
         members = concept["Members"].split(";")
         answers = concept["Answers"].split(";")
         for name in members + answers:
             if name != "" and name not in concept_names_in_tree:
                 concept_names_to_add.put(name)
-    return concepts_in_tree
+
+    return [all_concepts_by_name[cn] for cn in concept_names_in_tree]
+
+
+def detect_cycles(concepts):
+    key = "Fully specified name:en"
+    all_concepts_by_name = {c[key]: c for c in concepts}
+
+    def get_cycle(concept: OrderedDict, visited=set(), this_branch=[]) -> Optional[set]:
+        if concept[key] in this_branch:
+            return this_branch
+        if concept[key] in visited:
+            return None
+        visited.add(concept[key])
+        this_branch.append(concept[key])
+
+        members = concept["Members"].split(";")
+        answers = concept["Answers"].split(";")
+        for name in members + answers:
+            if name != "":
+                if get_cycle(all_concepts_by_name[name], visited, this_branch):
+                    return this_branch + [name]
+
+        this_branch.remove(concept[key])
+        return None
+
+    # Traverse all possible trees
+    cycles = []
+    for concept in concepts:
+        cycle = get_cycle(concept)
+        if cycle:
+            cycle_string = " --> ".join(cycle)
+            if all([cycle_string not in c for c in cycles]):
+                cycles.append(cycle_string)
+
+    if cycles:
+        raise Exception(
+            "Some concepts in the specified set refer circularly to each other. "
+            "The concepts therefore cannot be ordered in a CSV. Cylces of "
+            "dependencies are printed below.\n\t"
+            + "\n\t".join(cycle for cycle in cycles)
+        )
 
 
 def move_referring_concepts_down(concepts: list, key: str) -> list:
-    """ Moves concepts below their answers or set members """
+    """ Moves concepts below their answers or set members
+
+    Precondition: concepts must be free of cycles
+    """
 
     # We keep a dict for the order. The values in the order dict do not
     # have to be sequential.
