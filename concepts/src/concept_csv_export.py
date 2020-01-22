@@ -27,6 +27,7 @@ VERSION = 2.3
 DB_NAME = ""
 USER = ""
 PASSWORD = ""
+
 # Defaults
 OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
 LOCALES_DEFAULT = ["en", "es", "fr", "ht"]
@@ -141,8 +142,10 @@ def check_data_for_stop_characters():
     if result:
         print(
             "WARNING: The following concept reference terms contain "
-            "the Initializer stop character ';' (semicolon). This will "
-            "break things."  # TODO: replace them with periods
+            "the Initializer stop character ';' (semicolon). If the "
+            "corresponding concepts appear in your CSV export, they "
+            "will fail to be loaded because the 'Same as concept mappings' "
+            "field will be malformed."  # TODO: replace them with periods
         )
         for item in result:
             print(item)
@@ -160,7 +163,9 @@ def check_data_for_stop_characters():
         print(
             "WARNING: The following concept's fully specified English "
             "names contain the Initializer stop character ';' (semicolon). "
-            "This will break things."  # TODO: replace them with periods
+            "If they are members or answers of any concept that is being "
+            "exported, they will cause export to fail."
+            # TODO: replace them with periods
         )
         for item in result:
             print(item)
