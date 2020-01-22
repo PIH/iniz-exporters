@@ -9,7 +9,7 @@ import argparse
 import csv
 import os
 import queue
-from typing import List, Set, Tuple, Optional
+from typing import List, Set, Optional
 from collections import OrderedDict
 import subprocess as sp
 
@@ -19,7 +19,7 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 """
 
 
-# Globals
+# Globals -- modified only during initialization
 VERBOSE = False
 DOCKER = False
 VERSION = 2.3
@@ -318,7 +318,8 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     return [all_concepts_by_name[cn] for cn in concept_names_in_tree]
 
 
-def detect_cycles(concepts):
+def detect_cycles(concepts: OrderedDict):
+    """ Throws an exception if concepts reference each other cyclically """
     key = "Fully specified name:en"
     all_concepts_by_name = {c[key]: c for c in concepts}
 
@@ -340,21 +341,22 @@ def detect_cycles(concepts):
         this_branch.remove(concept[key])
         return None
 
-    # Traverse all possible trees
-    cycles = []
+    # Check all possible trees
+    cycle_strings: List[str] = []
     for concept in concepts:
         cycle = get_cycle(concept)
         if cycle:
             cycle_string = " --> ".join(cycle)
-            if all([cycle_string not in c for c in cycles]):
-                cycles.append(cycle_string)
+            # Check that this isn't a substring of any existing string
+            if all([cycle_string not in c for c in cycle_strings]):
+                cycle_strings.append(cycle_string)
 
-    if cycles:
+    if cycle_strings:
         raise Exception(
             "Some concepts in the specified set refer circularly to each other. "
             "The concepts therefore cannot be ordered in a CSV. Cylces of "
             "dependencies are printed below.\n\t"
-            + "\n\t".join(cycle for cycle in cycles)
+            + "\n\t".join(c for c in cycle_strings)
         )
 
 

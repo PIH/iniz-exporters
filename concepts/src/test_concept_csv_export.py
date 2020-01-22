@@ -1,7 +1,6 @@
 #!/usr/bin/env pytest
 
 from pprint import pprint
-import concept_csv_export as cce
 from concept_csv_export import (
     set_globals,
     get_sql_code,
@@ -16,17 +15,7 @@ from collections import OrderedDict
 NAME_TYPES = ["full", "short"]
 LOCALES = ["en", "es", "fr", "ht"]
 
-cce.DB_NAME = "ces"
-cce.DOCKER = True
-set_globals(
-    database="ces",
-    verbose=False,
-    docker=True,
-    runtime_properties_path=None,
-    user=None,
-    password=None,
-    version=2.3,
-)
+set_globals(database="ces", docker=True)
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():
