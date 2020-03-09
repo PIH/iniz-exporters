@@ -7,6 +7,7 @@ from concept_csv_export import (
     move_referring_concepts_down,
     run_sql,
     sql_result_to_list_of_ordered_dicts,
+    exclude,
     get_all_concepts_in_tree,
     detect_cycles,
 )
@@ -83,3 +84,19 @@ def test_detect_cycles():
     except Exception as e:
         assert "c --> d --> f --> c" in str(e)
         assert str(e).count("\n\t") == 1  # only should print one cycle
+
+
+def test_integration():
+    key = "Fully specified name:en"
+    concepts = [
+        OrderedDict([(key, "a"), ("Answers", ""), ("Members", "b")]),
+        OrderedDict([(key, "b"), ("Answers", "c"), ("Members", "")]),
+        OrderedDict([(key, "c"), ("Answers", ""), ("Members", "")]),
+        OrderedDict([(key, "d"), ("Answers", ""), ("Members", "")]),
+    ]
+    concepts = get_all_concepts_in_tree(concepts, "a")
+    detect_cycles(concepts)
+    concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
+    excludes = ["b"]
+    concepts = exclude(concepts, excludes)
+    assert [c[key] for c in concepts] == ["c", "a"]

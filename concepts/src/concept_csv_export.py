@@ -89,6 +89,7 @@ def main(
     user: Optional[str] = None,
     password: Optional[str] = None,
     version: float = VERSION,
+    exclude_files: List[str] = None,
 ):
     set_globals(
         database=database,
@@ -113,17 +114,22 @@ def main(
     print("  There are {} total concepts".format(len(all_concepts)))
     if set_name:
         concepts = get_all_concepts_in_tree(all_concepts, set_name)
+        print("  There are {} concepts in this tree".format(len(concepts)))
     else:
         concepts = all_concepts
     detect_cycles(concepts)
-    print("Reordering...")
-    ordered_concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
-    print("Writing output file " + outfile)
+    print("Reordering")
+    concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
+    if exclude_files:
+        print("Filtering out excludes")
+        excludes = get_excludes_from_files(exclude_files)
+        concepts = exclude(concepts, excludes)
+    print("Writing {} concepts to output file {}".format(len(concepts), outfile))
     with open(outfile, "w") as f:
-        keys = get_columns(locales, name_types, ordered_concepts)
+        keys = get_columns(locales, name_types, concepts)
         writer = csv.DictWriter(f, keys)
         writer.writeheader()
-        writer.writerows(ordered_concepts)
+        writer.writerows(concepts)
 
 
 def check_data_for_stop_characters():
@@ -323,7 +329,23 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     return [all_concepts_by_name[cn] for cn in concept_names_in_tree]
 
 
-def detect_cycles(concepts: OrderedDict):
+def get_excludes_from_files(excludes_files: List[str]) -> List[str]:
+    key = "Fully specified name:en"
+    excludes = set()
+    for exclude_file in excludes_files:
+        with open(exclude_file, "r") as f:
+            reader = csv.DictReader(f)
+            for line in reader:
+                excludes.add(line[key])
+    return list(excludes)
+
+
+def exclude(concepts: List[OrderedDict], excludes: List[str]) -> List[OrderedDict]:
+    key = "Fully specified name:en"
+    return [c for c in concepts if c[key] not in excludes]
+
+
+def detect_cycles(concepts: List[OrderedDict]):
     """ Throws an exception if concepts reference each other cyclically """
     key = "Fully specified name:en"
     all_concepts_by_name = {c[key]: c for c in concepts}
@@ -561,6 +583,12 @@ if __name__ == "__main__":
         "--password",
         help="The password for the database. Defaults to the one stored in openmrs-runtime.properties.",
     )
+    parser.add_argument(
+        "-e",
+        "--exclude-files",
+        help="CSV files of concepts to exclude from this export.",
+        nargs="+",
+    )
     args = parser.parse_args()
 
     main(
@@ -575,4 +603,5 @@ if __name__ == "__main__":
         password=args.password,
         runtime_properties_path=args.props_path,
         version=args.version,
+        exclude_files=args.exclude_files,
     )
