@@ -4,6 +4,8 @@ Utilities to generate [Initializer](https://github.com/mekomsolutions/openmrs-mo
 
 ## concepts
 
+Requires Python 3.8
+
 ```
 ./setup.sh
 ./run.sh --help
