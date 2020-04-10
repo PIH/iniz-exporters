@@ -235,7 +235,7 @@ def get_sql_code(
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
         "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
-        "GROUP_CONCAT(DISTINCT source.name, ':', crt.code SEPARATOR ';') 'Same as concept mappings', "
+        "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as concept mappings', "
         + ", ".join(
             [locale_select_snippet(name_types=name_types, locale=l) for l in locales]
         )
@@ -260,10 +260,11 @@ def get_sql_code(
         "JOIN concept_class cl ON c.class_id = cl.concept_class_id \n"
         "JOIN concept_datatype dt ON c.datatype_id = dt.concept_datatype_id \n"
         "LEFT JOIN concept_description cd_en ON c.concept_id = cd_en.concept_id AND cd_en.locale = 'en' \n"
-        "LEFT JOIN concept_reference_map crm ON c.concept_id = crm.concept_id \n"
-        "  LEFT JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
-        "  LEFT JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
-        "  LEFT JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id \n"
+        "LEFT JOIN (SELECT crm.concept_id, source.name term_source_name, crt.code term_code FROM concept_reference_map crm \n"
+        "           JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
+        "           JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
+        "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id) term \n"
+        "   ON c.concept_id = term.concept_id \n"
         + "\n ".join(
             [locale_join_snippet(name_types=name_types, locale=l) for l in locales]
         )
