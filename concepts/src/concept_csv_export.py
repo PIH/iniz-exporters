@@ -248,7 +248,7 @@ def get_sql_code(
         ", c_num.units 'Units'"
         ", c_num.display_precision 'Display precision'"
         ", c_num."
-        + ("allow_decimal" if VERSION >= 2.0 else "precise")
+        + ("allow_decimal" if VERSION >= 2.3 else "precise")
         + " 'Allow decimals'"
         ", c_cx.handler 'Complex data handler'"
         ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ';') 'Members' "
@@ -556,7 +556,7 @@ if __name__ == "__main__":
         "--version",
         type=float,
         default=VERSION,
-        help="The OpenMRS version for which we are querying the database.",
+        help="The OpenMRS database/platform version.",
     )
     parser.add_argument(
         "-l",
