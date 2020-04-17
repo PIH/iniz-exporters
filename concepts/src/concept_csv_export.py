@@ -150,7 +150,7 @@ def check_data_for_stop_characters():
             "WARNING: The following concept reference terms contain "
             "the Initializer stop character ';' (semicolon). If the "
             "corresponding concepts appear in your CSV export, they "
-            "will fail to be loaded because the 'Same as concept mappings' "
+            "will fail to be loaded because the 'Same as mappings' "
             "field will be malformed."  # TODO: replace them with periods
         )
         for item in result:
@@ -235,7 +235,7 @@ def get_sql_code(
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
         "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
-        "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as concept mappings', "
+        "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as mappings', "
         + ", ".join(
             [locale_select_snippet(name_types=name_types, locale=l) for l in locales]
         )
@@ -503,7 +503,7 @@ def get_columns(
             "Data type",
             "Answers",
             "Members",
-            "Same as concept mappings",
+            "Same as mappings",
         ]
         + names[1:]
     )
