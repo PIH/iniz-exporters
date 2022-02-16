@@ -204,7 +204,7 @@ def get_sql_code(
         snippets = []
         for name_type in name_types:
             snippets.append(
-                " cn_{l}_{t}.name '{iniz_name}:{l}' ".format(
+                " MAX(cn_{l}_{t}.name) '{iniz_name}:{l}' ".format(
                     l=locale, t=name_type, iniz_name=NAME_TYPE_INIZ_NAMES[name_type]
                 )
             )
@@ -234,23 +234,23 @@ def get_sql_code(
 
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
-        "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
+        "SELECT c.uuid, MAX(cd_en.description) 'Description:en', MAX(cl.name) 'Data class', MAX(dt.name) 'Data type', "
         "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as mappings', "
         + ", ".join(
             [locale_select_snippet(name_types=name_types, locale=l) for l in locales]
         )
-        + ", c_num.hi_absolute 'Absolute high'"
-        ", c_num.hi_critical 'Critical high'"
-        ", c_num.hi_normal 'Normal high'"
-        ", c_num.low_absolute 'Absolue low'"
-        ", c_num.low_critical 'Critical low'"
-        ", c_num.low_normal 'Normal low'"
-        ", c_num.units 'Units'"
-        ", c_num.display_precision 'Display precision'"
-        ", c_num."
+        + ", MAX(c_num.hi_absolute) 'Absolute high'"
+        ", MAX(c_num.hi_critical) 'Critical high'"
+        ", MAX(c_num.hi_normal) 'Normal high'"
+        ", MAX(c_num.low_absolute) 'Absolue low'"
+        ", MAX(c_num.low_critical) 'Critical low'"
+        ", MAX(c_num.low_normal) 'Normal low'"
+        ", MAX(c_num.units) 'Units'"
+        ", MAX(c_num.display_precision) 'Display precision'"
+        ", MAX(c_num."
         + ("allow_decimal" if VERSION >= 2.3 else "precise")
-        + " 'Allow decimals'"
-        ", c_cx.handler 'Complex data handler'"
+        + ") 'Allow decimals'"
+        ", MAX(c_cx.handler) 'Complex data handler'"
         ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ';') 'Members' "
         ", GROUP_CONCAT(DISTINCT ans_name.name SEPARATOR ';') 'Answers' "
     )
@@ -282,7 +282,7 @@ def get_sql_code(
 
     ending = (
         "WHERE c.retired = 0  {where_part} "
-        "GROUP BY c.concept_id "
+        "GROUP BY c.concept_id, c.is_set, c.uuid "
         "ORDER BY c.is_set {limit_part} "
     ).format(
         limit_part="LIMIT {}".format(limit) if limit != None else "",
