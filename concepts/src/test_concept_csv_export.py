@@ -12,11 +12,12 @@ from concept_csv_export import (
     detect_cycles,
 )
 from collections import OrderedDict
+from test_env import DB_NAME, DOCKER
 
 NAME_TYPES = ["full", "short"]
 LOCALES = ["en", "es", "fr", "ht"]
 
-set_globals(database="ces", docker=True)
+set_globals(database=DB_NAME, docker=DOCKER)
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():
