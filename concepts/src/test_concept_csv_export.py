@@ -17,12 +17,12 @@ from test_env import DB_NAME, DOCKER
 NAME_TYPES = ["full", "short"]
 LOCALES = ["en", "es", "fr", "ht"]
 
-set_globals(database=DB_NAME, docker=DOCKER)
+set_globals(database=DB_NAME, docker=DOCKER, locales=LOCALES)
 
 
 def test_get_concepts_results_have_uuid_and_match_limit():
     limit = 10
-    sql_code = get_sql_code(name_types=NAME_TYPES, locales=LOCALES, limit=limit)
+    sql_code = get_sql_code(name_types=NAME_TYPES, limit=limit)
     sql_result = run_sql(sql_code)
     all_concepts = sql_result_to_list_of_ordered_dicts(sql_result)
     pprint(all_concepts)
