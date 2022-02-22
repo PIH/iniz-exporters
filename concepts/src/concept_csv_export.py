@@ -18,11 +18,12 @@ A program for exporting concepts from an OpenMRS MySQL database to
 CSVs that can be loaded by the OpenMRS Initializer module.
 """
 
-
 # Globals -- modified only during initialization
 VERBOSE = False
 DOCKER = False
 VERSION = 2.3
+LOCALES = ['en']
+DEFAULT_LOCALE = 'en'
 # These must be set before running run_sql
 DB_NAME = ""
 USER = ""
@@ -30,7 +31,6 @@ PASSWORD = ""
 
 # Defaults
 OUTFILE_DEFAULT_BASENAME = os.path.expanduser("~/Downloads/concepts")
-LOCALES_DEFAULT = ["en", "es", "fr", "ht"]
 NAME_TYPES_DEFAULT = ["full", "short"]
 
 # Constants
@@ -45,16 +45,19 @@ def set_globals(
     user: Optional[str] = None,
     password: Optional[str] = None,
     version: float = VERSION,
+    locales: list[str] = LOCALES,
 ):
     """
     Initializes the global variables used in this script.
     Defaults are as described in `concept_csv_export.py --help`.
     """
-    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION
+    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES
     VERBOSE = verbose
     DB_NAME = database
     DOCKER = docker
     VERSION = version
+    LOCALES = locales
+    DEFAULT_LOCALE = locales[0]
 
     USER = user or get_command_output(
         'grep connection.username {} | cut -f2 -d"="'.format(
@@ -81,7 +84,7 @@ def main(
     database: str,
     set_name: Optional[str],
     docker: bool = DOCKER,
-    locales: list = LOCALES_DEFAULT,
+    locales: list = LOCALES,
     name_types: list = NAME_TYPES_DEFAULT,
     outfile: str = "",  # default is set in the function
     verbose: bool = VERBOSE,
@@ -99,6 +102,7 @@ def main(
         user=user,
         password=password,
         version=version,
+        locales=locales,
     )
     if not outfile:
         outfile = (
@@ -110,7 +114,7 @@ def main(
     check_data_for_stop_characters()
 
     limit = None  # just here in case needed for experimenting
-    all_concepts = get_all_concepts(locales=locales, name_types=name_types, limit=limit)
+    all_concepts = get_all_concepts(name_types=name_types, limit=limit)
     print("  There are {} total concepts".format(len(all_concepts)))
     if set_name:
         concepts = get_all_concepts_in_tree(all_concepts, set_name)
@@ -119,14 +123,14 @@ def main(
         concepts = all_concepts
     detect_cycles(concepts)
     print("Reordering")
-    concepts = move_referring_concepts_down(concepts, "Fully specified name:en")
+    concepts = move_referring_concepts_down(concepts, "Fully specified name:" + DEFAULT_LOCALE)
     if exclude_files:
         print("Filtering out excludes")
         excludes = get_excludes_from_files(exclude_files)
         concepts = exclude(concepts, excludes)
     print("Writing {} concepts to output file {}".format(len(concepts), outfile))
     with open(outfile, "w") as f:
-        keys = get_columns(locales, name_types, concepts)
+        keys = get_columns(name_types, concepts)
         writer = csv.DictWriter(f, keys)
         writer.writeheader()
         writer.writerows(concepts)
@@ -177,9 +181,9 @@ def check_data_for_stop_characters():
             print(item)
 
 
-def get_all_concepts(locales: list, name_types: list, limit: Optional[int]) -> list:
+def get_all_concepts(name_types: list, limit: Optional[int]) -> list:
     """ Queries all concepts from the database and sticks them into a list. """
-    sql_code = get_sql_code(locales=locales, name_types=name_types, limit=limit)
+    sql_code = get_sql_code(name_types=name_types, limit=limit)
     if VERBOSE:
         print(sql_code)
         input("Press any key to continue...")
@@ -195,7 +199,7 @@ def get_all_concepts(locales: list, name_types: list, limit: Optional[int]) -> l
 
 
 def get_sql_code(
-    locales: list, name_types: list, limit: Optional[int] = None, where: str = ""
+    name_types: list, limit: Optional[int] = None, where: str = ""
 ) -> str:
     """ Produces the SQL query to run to get all the concepts. """
 
@@ -204,7 +208,7 @@ def get_sql_code(
         snippets = []
         for name_type in name_types:
             snippets.append(
-                " cn_{l}_{t}.name '{iniz_name}:{l}' ".format(
+                " MAX(cn_{l}_{t}.name) '{iniz_name}:{l}' ".format(
                     l=locale, t=name_type, iniz_name=NAME_TYPE_INIZ_NAMES[name_type]
                 )
             )
@@ -234,23 +238,23 @@ def get_sql_code(
 
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
-        "SELECT c.uuid, cd_en.description 'Description:en', cl.name 'Data class', dt.name 'Data type', "
+        "SELECT c.uuid, MAX(cd.description) 'Description:" + DEFAULT_LOCALE + "', MAX(cl.name) 'Data class', MAX(dt.name) 'Data type', "
         "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as mappings', "
         + ", ".join(
-            [locale_select_snippet(name_types=name_types, locale=l) for l in locales]
+            [locale_select_snippet(name_types=name_types, locale=l) for l in LOCALES]
         )
-        + ", c_num.hi_absolute 'Absolute high'"
-        ", c_num.hi_critical 'Critical high'"
-        ", c_num.hi_normal 'Normal high'"
-        ", c_num.low_absolute 'Absolue low'"
-        ", c_num.low_critical 'Critical low'"
-        ", c_num.low_normal 'Normal low'"
-        ", c_num.units 'Units'"
-        ", c_num.display_precision 'Display precision'"
-        ", c_num."
+        + ", MAX(c_num.hi_absolute) 'Absolute high'"
+        ", MAX(c_num.hi_critical) 'Critical high'"
+        ", MAX(c_num.hi_normal) 'Normal high'"
+        ", MAX(c_num.low_absolute) 'Absolue low'"
+        ", MAX(c_num.low_critical) 'Critical low'"
+        ", MAX(c_num.low_normal) 'Normal low'"
+        ", MAX(c_num.units) 'Units'"
+        ", MAX(c_num.display_precision) 'Display precision'"
+        ", MAX(c_num."
         + ("allow_decimal" if VERSION >= 2.3 else "precise")
-        + " 'Allow decimals'"
-        ", c_cx.handler 'Complex data handler'"
+        + ") 'Allow decimals'"
+        ", MAX(c_cx.handler) 'Complex data handler'"
         ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ';') 'Members' "
         ", GROUP_CONCAT(DISTINCT ans_name.name SEPARATOR ';') 'Answers' "
     )
@@ -259,30 +263,30 @@ def get_sql_code(
         "FROM concept c \n"
         "JOIN concept_class cl ON c.class_id = cl.concept_class_id \n"
         "JOIN concept_datatype dt ON c.datatype_id = dt.concept_datatype_id \n"
-        "LEFT JOIN concept_description cd_en ON c.concept_id = cd_en.concept_id AND cd_en.locale = 'en' \n"
+        "LEFT JOIN concept_description cd ON c.concept_id = cd.concept_id AND cd.locale = '" + DEFAULT_LOCALE + "' \n"
         "LEFT JOIN (SELECT crm.concept_id, source.name term_source_name, crt.code term_code FROM concept_reference_map crm \n"
         "           JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
         "           JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
         "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id) term \n"
         "   ON c.concept_id = term.concept_id \n"
         + "\n ".join(
-            [locale_join_snippet(name_types=name_types, locale=l) for l in locales]
+            [locale_join_snippet(name_types=name_types, locale=l) for l in LOCALES]
         )
         + "\nLEFT JOIN concept_numeric c_num ON c.concept_id = c_num.concept_id "
         "LEFT JOIN concept_complex c_cx ON c.concept_id = c_cx.concept_id \n"
         "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set \n"
         "  LEFT JOIN concept c_set_c ON c_set.concept_id = c_set_c.concept_id AND c_set_c.retired = 0 \n"  # we look up the concept to filter out the retired members
         "  LEFT JOIN concept_name set_mem_name ON c_set_c.concept_id = set_mem_name.concept_id \n"
-        "    AND set_mem_name.locale = 'en' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 \n"
+        "    AND set_mem_name.locale = '" + DEFAULT_LOCALE + "' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 \n"
         "LEFT JOIN concept_answer c_ans ON c.concept_id = c_ans.concept_id \n"
         "  LEFT JOIN concept c_ans_c ON c_ans.answer_concept = c_ans_c.concept_id AND c_ans_c.retired = 0 \n"  # we look up the concept to filter out the retired answers
         "  LEFT JOIN concept_name ans_name ON c_ans_c.concept_id = ans_name.concept_id \n"
-        "    AND ans_name.locale = 'en' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 \n"
+        "    AND ans_name.locale = '" + DEFAULT_LOCALE + "' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 \n"
     )
 
     ending = (
         "WHERE c.retired = 0  {where_part} "
-        "GROUP BY c.concept_id "
+        "GROUP BY c.concept_id, c.is_set, c.uuid "
         "ORDER BY c.is_set {limit_part} "
     ).format(
         limit_part="LIMIT {}".format(limit) if limit != None else "",
@@ -301,7 +305,7 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     Also checks for dependency cycles. Throws a list of concepts involved
     in cycles at the end, if there are any.
     """
-    key = "Fully specified name:en"
+    key = "Fully specified name:" + DEFAULT_LOCALE
     all_concepts_by_name = {c[key]: c for c in all_concepts}
     concept_names_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
     concept_names_to_add.put(set_name)
@@ -331,7 +335,7 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
 
 
 def get_excludes_from_files(excludes_files: List[str]) -> List[str]:
-    key = "Fully specified name:en"
+    key = "Fully specified name:" + DEFAULT_LOCALE
     excludes = set()
     for exclude_file in excludes_files:
         with open(exclude_file, "r") as f:
@@ -342,13 +346,13 @@ def get_excludes_from_files(excludes_files: List[str]) -> List[str]:
 
 
 def exclude(concepts: List[OrderedDict], excludes: List[str]) -> List[OrderedDict]:
-    key = "Fully specified name:en"
+    key = "Fully specified name:" + DEFAULT_LOCALE
     return [c for c in concepts if c[key] not in excludes]
 
 
 def detect_cycles(concepts: List[OrderedDict]):
     """ Throws an exception if concepts reference each other cyclically """
-    key = "Fully specified name:en"
+    key = "Fully specified name:" + DEFAULT_LOCALE
     all_concepts_by_name = {c[key]: c for c in concepts}
 
     def get_cycle(concept: OrderedDict, visited=set(), this_branch=[]) -> Optional[set]:
@@ -491,9 +495,9 @@ def squish_name(name: str):
 
 
 def get_columns(
-    locales: List[str], name_types: List[str], concepts: List[OrderedDict]
+    name_types: List[str], concepts: List[OrderedDict]
 ) -> List[str]:
-    names = name_column_headers(locales, name_types)
+    names = name_column_headers(name_types)
     keys = (
         ["uuid", "Void/Retire"]
         + [names[0]]
@@ -511,10 +515,10 @@ def get_columns(
     return keys + other_keys
 
 
-def name_column_headers(locales: List[str], name_types: List[str]) -> List[str]:
+def name_column_headers(name_types: List[str]) -> List[str]:
     return [
         "{nt_long}:{l}".format(nt_long=NAME_TYPE_INIZ_NAMES[nt], l=l)
-        for l in locales
+        for l in LOCALES
         for nt in name_types
     ]
 
@@ -561,8 +565,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "-l",
         "--locales",
-        default=",".join(LOCALES_DEFAULT),
-        help="A comma-separated list of locales for which to extract concept names.",
+        default=",".join(LOCALES),
+        help="A comma-separated list of locales for which to extract concept names. The first must be the default locale.",
     )
     parser.add_argument(
         "--name-types",
