@@ -255,8 +255,8 @@ def get_sql_code(
         + ("allow_decimal" if VERSION >= 2.3 else "precise")
         + ") 'Allow decimals'"
         ", MAX(c_cx.handler) 'Complex data handler'"
-        ", GROUP_CONCAT(DISTINCT set_mem_name.name SEPARATOR ';') 'Members' "
-        ", GROUP_CONCAT(DISTINCT ans_name.name SEPARATOR ';') 'Answers' "
+        ", GROUP_CONCAT(DISTINCT set_mem_name.name ORDER BY c_set.sort_weight ASC SEPARATOR ';') 'Members' "
+        ", GROUP_CONCAT(DISTINCT ans_name.name ORDER BY c_ans.sort_weight ASC SEPARATOR ';') 'Answers' "
     )
 
     tables = (
