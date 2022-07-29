@@ -24,7 +24,7 @@ DOCKER = False
 VERSION = 2.3
 LOCALES = ['en']
 DEFAULT_LOCALE = 'en'
-ENCODING = 'latin-1'
+ENCODING = 'UTF-8'
 CONCEPT_KEY_MAPPING: Optional[str] = None
 # These must be set before running run_sql
 DB_NAME = ""
@@ -617,6 +617,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-E",
         "--encoding",
+        default=ENCODING,
         help="The encoding to use for reading output from commands, including results from the MySQL database.",
     )
     parser.add_argument(
