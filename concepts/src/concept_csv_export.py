@@ -24,6 +24,8 @@ DOCKER = False
 VERSION = 2.3
 LOCALES = ['en']
 DEFAULT_LOCALE = 'en'
+ENCODING = 'UTF-8'
+CONCEPT_KEY_MAPPING: Optional[str] = None
 # These must be set before running run_sql
 DB_NAME = ""
 USER = ""
@@ -45,19 +47,23 @@ def set_globals(
     user: Optional[str] = None,
     password: Optional[str] = None,
     version: float = VERSION,
-    locales: list[str] = LOCALES,
+    locales: list = LOCALES,
+    encoding: str = ENCODING,
+    concept_key_mapping: Optional[str] = CONCEPT_KEY_MAPPING,
 ):
     """
     Initializes the global variables used in this script.
     Defaults are as described in `concept_csv_export.py --help`.
     """
-    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES
+    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES, ENCODING, CONCEPT_KEY_MAPPING
     VERBOSE = verbose
     DB_NAME = database
     DOCKER = docker
     VERSION = version
     LOCALES = locales
     DEFAULT_LOCALE = locales[0]
+    ENCODING = encoding
+    CONCEPT_KEY_MAPPING = concept_key_mapping
 
     USER = user or get_command_output(
         'grep connection.username {} | cut -f2 -d"="'.format(
@@ -93,6 +99,8 @@ def main(
     password: Optional[str] = None,
     version: float = VERSION,
     exclude_files: List[str] = None,
+    encoding: str = ENCODING,
+    concept_key_mapping = CONCEPT_KEY_MAPPING,
 ):
     set_globals(
         database=database,
@@ -103,6 +111,8 @@ def main(
         password=password,
         version=version,
         locales=locales,
+        encoding=encoding,
+        concept_key_mapping=concept_key_mapping,
     )
     if not outfile:
         outfile = (
@@ -123,7 +133,7 @@ def main(
         concepts = all_concepts
     detect_cycles(concepts)
     print("Reordering")
-    concepts = move_referring_concepts_down(concepts, "Fully specified name:" + DEFAULT_LOCALE)
+    concepts = move_referring_concepts_down(concepts, get_key())
     if exclude_files:
         print("Filtering out excludes")
         excludes = get_excludes_from_files(exclude_files)
@@ -195,6 +205,7 @@ def get_all_concepts(name_types: list, limit: Optional[int]) -> list:
         input("Press any key to continue...")
     print("Parsing results...")
     all_concepts = sql_result_to_list_of_ordered_dicts(sql_result)
+    append_key_mapping(all_concepts)
     return all_concepts
 
 
@@ -220,14 +231,11 @@ def get_sql_code(
         snippets = []
         for name_type in name_types:
             snippets.append(
-                " {join_type} JOIN concept_name cn_{l}_{t} "
+                " LEFT JOIN concept_name cn_{l}_{t} "
                 "ON c.concept_id = cn_{l}_{t}.concept_id "
                 "AND cn_{l}_{t}.locale = '{l}' "
                 "AND cn_{l}_{t}.concept_name_type = '{sql_name}' "
                 "AND cn_{l}_{t}.voided = 0".format(
-                    join_type=(
-                        "" if name_type == "full" and locale == "en" else "LEFT"
-                    ),
                     l=locale,
                     t=name_type,
                     sql_name=name_type_sql_names[name_type],
@@ -297,15 +305,24 @@ def get_sql_code(
     return sql_code
 
 
+def append_key_mapping(all_concepts: list):
+    if CONCEPT_KEY_MAPPING:
+        for concept in all_concepts:
+            for mapping in concept["Same as mappings"].split(";"):
+                if mapping:
+                    mapping_parts = mapping.split(":")
+                    if mapping_parts[0] == CONCEPT_KEY_MAPPING:
+                        concept["_mapping:" + mapping_parts[0]] = mapping_parts[1]
+            if "_mapping:" + CONCEPT_KEY_MAPPING not in concept:
+                raise IndexError("The following concept does not have a mapping for source '" + CONCEPT_KEY_MAPPING + "': " + str(concept))
+
+
 def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
     """ Filters a list of concepts for decendants of set_name
 
     "Descendants" means answers and set members (or members of members, etc.)
-
-    Also checks for dependency cycles. Throws a list of concepts involved
-    in cycles at the end, if there are any.
     """
-    key = "Fully specified name:" + DEFAULT_LOCALE
+    key = get_key()
     all_concepts_by_name = {c[key]: c for c in all_concepts}
     concept_names_to_add: queue.SimpleQueue[str] = queue.SimpleQueue()
     concept_names_to_add.put(set_name)
@@ -335,7 +352,7 @@ def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
 
 
 def get_excludes_from_files(excludes_files: List[str]) -> List[str]:
-    key = "Fully specified name:" + DEFAULT_LOCALE
+    key = get_key()
     excludes = set()
     for exclude_file in excludes_files:
         with open(exclude_file, "r") as f:
@@ -346,13 +363,13 @@ def get_excludes_from_files(excludes_files: List[str]) -> List[str]:
 
 
 def exclude(concepts: List[OrderedDict], excludes: List[str]) -> List[OrderedDict]:
-    key = "Fully specified name:" + DEFAULT_LOCALE
+    key = get_key()
     return [c for c in concepts if c[key] not in excludes]
 
 
 def detect_cycles(concepts: List[OrderedDict]):
     """ Throws an exception if concepts reference each other cyclically """
-    key = "Fully specified name:" + DEFAULT_LOCALE
+    key = get_key()
     all_concepts_by_name = {c[key]: c for c in concepts}
 
     def get_cycle(concept: OrderedDict, visited=set(), this_branch=[]) -> Optional[set]:
@@ -458,7 +475,7 @@ def run_sql(sql_code: str) -> str:
 
 
 def get_command_output(command):
-    result = sp.run(command, capture_output=True, shell=True, encoding="latin-1")
+    result = sp.run(command, capture_output=True, shell=True, encoding=ENCODING)
     if result.returncode != 0:
         raise Exception(
             "Command {}\nexited {}. Stderr:\n{}".format(
@@ -494,13 +511,17 @@ def squish_name(name: str):
     return name.replace(" ", "-")
 
 
+def get_key():
+    return "_mapping:" + CONCEPT_KEY_MAPPING if CONCEPT_KEY_MAPPING else "Fully specified name:" + DEFAULT_LOCALE
+
+
 def get_columns(
     name_types: List[str], concepts: List[OrderedDict]
 ) -> List[str]:
     names = name_column_headers(name_types)
     keys = (
         ["uuid", "Void/Retire"]
-        + [names[0]]
+        + names
         + [
             "Description:en",
             "Data class",
@@ -509,9 +530,8 @@ def get_columns(
             "Members",
             "Same as mappings",
         ]
-        + names[1:]
     )
-    other_keys = [k for k in concepts[0].keys() if k not in keys]
+    other_keys = [k for k in concepts[0].keys() if k not in keys and not k.startswith("_mapping")]
     return keys + other_keys
 
 
@@ -594,6 +614,17 @@ if __name__ == "__main__":
         help="CSV files of concepts to exclude from this export.",
         nargs="+",
     )
+    parser.add_argument(
+        "-E",
+        "--encoding",
+        default=ENCODING,
+        help="The encoding to use for reading output from commands, including results from the MySQL database.",
+    )
+    parser.add_argument(
+        "-k",
+        "--concept-key-mapping",
+        help="By default, concepts refer to each other by Fully Specified Name in the default locale. Using this argument, concepts will refer to each other with a concept mapping instead. For example `-k CIEL`.",
+    )
     args = parser.parse_args()
 
     main(
@@ -609,4 +640,6 @@ if __name__ == "__main__":
         runtime_properties_path=args.props_path,
         version=args.version,
         exclude_files=args.exclude_files,
+        encoding=args.encoding,
+        concept_key_mapping=args.concept_key_mapping,
     )
