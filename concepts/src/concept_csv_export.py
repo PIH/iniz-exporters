@@ -157,9 +157,10 @@ def main(
     print("Writing {} concepts to output file {}".format(len(concepts), outfile))
     with open(outfile, "w") as f:
         keys = get_columns(name_types, concepts)
+        filtered_concepts = [{ k: (c[k] if k != "Void/Retire" else None) for k in keys} for c in concepts]
         writer = csv.DictWriter(f, keys)
         writer.writeheader()
-        writer.writerows(concepts)
+        writer.writerows(filtered_concepts)
 
 
 def check_data_for_stop_characters():
@@ -180,7 +181,7 @@ def check_data_for_stop_characters():
             "WARNING: The following concept reference terms contain "
             "the Initializer stop character ';' (semicolon). If the "
             "corresponding concepts appear in your CSV export, they "
-            "will fail to be loaded because the 'Mapping' "
+            "will fail to be loaded because the 'Mappings' "
             "field will be malformed."  # TODO: replace them with periods
         )
         for item in result:
@@ -264,7 +265,7 @@ def get_sql_code(
         return mapping_type.replace("-", "_").replace(" ", "_")
 
     def mapping_select_snippet(mapping_type: str):
-        return "GROUP_CONCAT(DISTINCT term_source_name_{tn}, ':', term_code_{tn} SEPARATOR ';') 'Mapping|{t}'\n".format(
+        return "GROUP_CONCAT(DISTINCT term_source_name_{tn}, ':', term_code_{tn} SEPARATOR ';') 'Mappings|{t}'\n".format(
                 t=mapping_type,
                 tn=type_name_transform(mapping_type))
 
@@ -342,7 +343,7 @@ def get_sql_code(
 def append_key_mapping(all_concepts: list):
     if CONCEPT_KEY_MAPPING:
         for concept in all_concepts:
-            for mapping in concept["Mapping|SAME-AS"].split(";"):
+            for mapping in concept["Mappings|SAME-AS"].split(";"):
                 if mapping:
                     mapping_parts = mapping.split(":")
                     if mapping_parts[0] == CONCEPT_KEY_MAPPING:
@@ -553,7 +554,7 @@ def get_columns(
     name_types: List[str], concepts: List[OrderedDict]
 ) -> List[str]:
     names = name_column_headers(name_types)
-    keys = (
+    initial_keys = (
         ["uuid", "Void/Retire"]
         + names
         + [
@@ -562,11 +563,12 @@ def get_columns(
             "Data type",
             "Answers",
             "Members",
-            "Mapping|SAME-AS",
         ]
     )
-    other_keys = [k for k in concepts[0].keys() if k not in keys and not k.startswith("_mapping")]
-    return keys + other_keys
+    other_keys = [k for k in concepts[0].keys() if k not in initial_keys and not k.startswith("_mapping")]
+    all_keys = initial_keys + other_keys
+    filtered_keys = [k for k in all_keys if k == "Void/Retire" or any([c[k] for c in concepts])]
+    return filtered_keys
 
 
 def name_column_headers(name_types: List[str]) -> List[str]:
