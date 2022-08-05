@@ -1,2 +1,2 @@
-DB_NAME="ces_ci"
-DOCKER=True
+DB_NAME = "ces_ci"
+DOCKER = True
