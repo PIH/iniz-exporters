@@ -1,2 +1,2 @@
-DB_NAME=""
+DB_NAME="ces_ci"
 DOCKER=True

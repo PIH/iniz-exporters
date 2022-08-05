@@ -3,3 +3,5 @@ pylint
 pytest
 pytest-watch
 ipdb
+packaging
+
