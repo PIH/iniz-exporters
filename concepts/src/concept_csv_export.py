@@ -579,7 +579,7 @@ def get_columns(name_types: List[str], concepts: List[OrderedDict]) -> List[str]
         ["uuid", "Void/Retire"]
         + names
         + [
-            "Description:en",
+            "Description:" + DEFAULT_LOCALE,
             "Data class",
             "Data type",
             "Answers",
