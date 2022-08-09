@@ -12,6 +12,7 @@ import queue
 from typing import List, Set, Optional
 from collections import OrderedDict
 import subprocess as sp
+from packaging import version
 
 DESCRIPTION = """
 A program for exporting concepts from an OpenMRS MySQL database to
@@ -21,11 +22,26 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 # Globals -- modified only during initialization
 VERBOSE = False
 DOCKER = False
-VERSION = 2.3
-LOCALES = ['en']
-DEFAULT_LOCALE = 'en'
-ENCODING = 'UTF-8'
+VERSION = "2.3"
+LOCALES = ["en"]
+DEFAULT_LOCALE = "en"
+ENCODING = "UTF-8"
 CONCEPT_KEY_MAPPING: Optional[str] = None
+MAPPING_TYPES: List[str] = [
+    "SAME-AS",
+    "NARROWER-THAN",
+    "BROADER-THAN",
+    "Associated finding",
+    "Associated morphology",
+    "Associated procedure",
+    "Associated with",
+    "Causative agent",
+    "Finding site",
+    "Has specimen",
+    "Laterality",
+    "Severity",
+]  # taken from Version 1 of https://wiki.openmrs.org/pages/viewpage.action?pageId=235276418
+
 # These must be set before running run_sql
 DB_NAME = ""
 USER = ""
@@ -46,7 +62,7 @@ def set_globals(
     runtime_properties_path: Optional[str] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
-    version: float = VERSION,
+    version: str = VERSION,
     locales: list = LOCALES,
     encoding: str = ENCODING,
     concept_key_mapping: Optional[str] = CONCEPT_KEY_MAPPING,
@@ -97,10 +113,10 @@ def main(
     runtime_properties_path: Optional[str] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
-    version: float = VERSION,
+    version: str = VERSION,
     exclude_files: List[str] = None,
     encoding: str = ENCODING,
-    concept_key_mapping = CONCEPT_KEY_MAPPING,
+    concept_key_mapping=CONCEPT_KEY_MAPPING,
 ):
     set_globals(
         database=database,
@@ -141,15 +157,18 @@ def main(
     print("Writing {} concepts to output file {}".format(len(concepts), outfile))
     with open(outfile, "w") as f:
         keys = get_columns(name_types, concepts)
+        filtered_concepts = [
+            {k: (c[k] if k != "Void/Retire" else None) for k in keys} for c in concepts
+        ]
         writer = csv.DictWriter(f, keys)
         writer.writeheader()
-        writer.writerows(concepts)
+        writer.writerows(filtered_concepts)
 
 
 def check_data_for_stop_characters():
-    """ Warns the user if, for fields that can be stored in CSV with multiple
-        values with some delimiter, some entry for that field contains the
-        delimiter.
+    """Warns the user if, for fields that can be stored in CSV with multiple
+    values with some delimiter, some entry for that field contains the
+    delimiter.
     """
     crt_query = (
         "SELECT crt.concept_reference_term_id, crs.name, crt.code "
@@ -164,7 +183,7 @@ def check_data_for_stop_characters():
             "WARNING: The following concept reference terms contain "
             "the Initializer stop character ';' (semicolon). If the "
             "corresponding concepts appear in your CSV export, they "
-            "will fail to be loaded because the 'Same as mappings' "
+            "will fail to be loaded because the 'Mappings' "
             "field will be malformed."  # TODO: replace them with periods
         )
         for item in result:
@@ -192,7 +211,7 @@ def check_data_for_stop_characters():
 
 
 def get_all_concepts(name_types: list, limit: Optional[int]) -> list:
-    """ Queries all concepts from the database and sticks them into a list. """
+    """Queries all concepts from the database and sticks them into a list."""
     sql_code = get_sql_code(name_types=name_types, limit=limit)
     if VERBOSE:
         print(sql_code)
@@ -209,10 +228,8 @@ def get_all_concepts(name_types: list, limit: Optional[int]) -> list:
     return all_concepts
 
 
-def get_sql_code(
-    name_types: list, limit: Optional[int] = None, where: str = ""
-) -> str:
-    """ Produces the SQL query to run to get all the concepts. """
+def get_sql_code(name_types: list, limit: Optional[int] = None, where: str = "") -> str:
+    """Produces the SQL query to run to get all the concepts."""
 
     def locale_select_snippet(name_types: list, locale: str):
 
@@ -244,25 +261,55 @@ def get_sql_code(
 
         return "\n    ".join(snippets)
 
+    def type_name_transform(mapping_type: str):
+        return mapping_type.replace("-", "_").replace(" ", "_")
+
+    def mapping_select_snippet(mapping_type: str):
+        return "GROUP_CONCAT(DISTINCT term_source_name_{tn}, ':', term_code_{tn} SEPARATOR ';') 'Mappings|{t}'\n".format(
+            t=mapping_type, tn=type_name_transform(mapping_type)
+        )
+
+    def mapping_join_snippet(mapping_type: str):
+        return (
+            "LEFT JOIN (SELECT crm.concept_id, source.name term_source_name_{tn}, crt.code term_code_{tn} FROM concept_reference_map crm \n"
+            "           JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = '{t}' \n"
+            "           JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
+            "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id) term_{tn} \n"
+            "   ON c.concept_id = term_{tn}.concept_id \n"
+        ).format(t=mapping_type, tn=type_name_transform(mapping_type))
+
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
-        "SELECT c.uuid, MAX(cd.description) 'Description:" + DEFAULT_LOCALE + "', MAX(cl.name) 'Data class', MAX(dt.name) 'Data type', "
-        "GROUP_CONCAT(DISTINCT term_source_name, ':', term_code SEPARATOR ';') 'Same as mappings', "
+        "SELECT c.uuid, MAX(cd.description) 'Description:"
+        + DEFAULT_LOCALE
+        + "', MAX(cl.name) 'Data class', MAX(dt.name) 'Data type', "
+        + ", ".join([mapping_select_snippet(mapping_type=t) for t in MAPPING_TYPES])
+        + ", "
         + ", ".join(
             [locale_select_snippet(name_types=name_types, locale=l) for l in LOCALES]
         )
         + ", MAX(c_num.hi_absolute) 'Absolute high'"
         ", MAX(c_num.hi_critical) 'Critical high'"
         ", MAX(c_num.hi_normal) 'Normal high'"
-        ", MAX(c_num.low_absolute) 'Absolue low'"
+        ", MAX(c_num.low_absolute) 'Absolute low'"
         ", MAX(c_num.low_critical) 'Critical low'"
         ", MAX(c_num.low_normal) 'Normal low'"
         ", MAX(c_num.units) 'Units'"
-        ", MAX(c_num.display_precision) 'Display precision'"
-        ", MAX(c_num."
-        + ("allow_decimal" if VERSION >= 2.3 else "precise")
-        + ") 'Allow decimals'"
-        ", MAX(c_cx.handler) 'Complex data handler'"
+        + (
+            (
+                ", MAX(c_num.display_precision) 'Display precision'"
+                ", MAX(c_num."
+                + (
+                    "allow_decimal"
+                    if version.parse(VERSION) >= version.parse("2.2")
+                    else "precise"
+                )
+                + ") 'Allow decimals'"
+            )
+            if version.parse(VERSION) >= version.parse("1.11")
+            else ""
+        )
+        + ", MAX(c_cx.handler) 'Complex data handler'"
         ", GROUP_CONCAT(DISTINCT set_mem_name.name ORDER BY c_set.sort_weight ASC SEPARATOR ';') 'Members' "
         ", GROUP_CONCAT(DISTINCT ans_name.name ORDER BY c_ans.sort_weight ASC SEPARATOR ';') 'Answers' "
     )
@@ -271,12 +318,10 @@ def get_sql_code(
         "FROM concept c \n"
         "JOIN concept_class cl ON c.class_id = cl.concept_class_id \n"
         "JOIN concept_datatype dt ON c.datatype_id = dt.concept_datatype_id \n"
-        "LEFT JOIN concept_description cd ON c.concept_id = cd.concept_id AND cd.locale = '" + DEFAULT_LOCALE + "' \n"
-        "LEFT JOIN (SELECT crm.concept_id, source.name term_source_name, crt.code term_code FROM concept_reference_map crm \n"
-        "           JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = 'SAME-AS' \n"
-        "           JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
-        "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id) term \n"
-        "   ON c.concept_id = term.concept_id \n"
+        "LEFT JOIN concept_description cd ON c.concept_id = cd.concept_id AND cd.locale = '"
+        + DEFAULT_LOCALE
+        + "' \n"
+        + "\n ".join([mapping_join_snippet(mapping_type=t) for t in MAPPING_TYPES])
         + "\n ".join(
             [locale_join_snippet(name_types=name_types, locale=l) for l in LOCALES]
         )
@@ -285,11 +330,15 @@ def get_sql_code(
         "LEFT JOIN concept_set c_set ON c.concept_id = c_set.concept_set \n"
         "  LEFT JOIN concept c_set_c ON c_set.concept_id = c_set_c.concept_id AND c_set_c.retired = 0 \n"  # we look up the concept to filter out the retired members
         "  LEFT JOIN concept_name set_mem_name ON c_set_c.concept_id = set_mem_name.concept_id \n"
-        "    AND set_mem_name.locale = '" + DEFAULT_LOCALE + "' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 \n"
+        "    AND set_mem_name.locale = '"
+        + DEFAULT_LOCALE
+        + "' AND set_mem_name.concept_name_type = 'FULLY_SPECIFIED' AND set_mem_name.voided = 0 \n"
         "LEFT JOIN concept_answer c_ans ON c.concept_id = c_ans.concept_id \n"
         "  LEFT JOIN concept c_ans_c ON c_ans.answer_concept = c_ans_c.concept_id AND c_ans_c.retired = 0 \n"  # we look up the concept to filter out the retired answers
         "  LEFT JOIN concept_name ans_name ON c_ans_c.concept_id = ans_name.concept_id \n"
-        "    AND ans_name.locale = '" + DEFAULT_LOCALE + "' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 \n"
+        "    AND ans_name.locale = '"
+        + DEFAULT_LOCALE
+        + "' AND ans_name.concept_name_type = 'FULLY_SPECIFIED' AND ans_name.voided = 0 \n"
     )
 
     ending = (
@@ -308,17 +357,22 @@ def get_sql_code(
 def append_key_mapping(all_concepts: list):
     if CONCEPT_KEY_MAPPING:
         for concept in all_concepts:
-            for mapping in concept["Same as mappings"].split(";"):
+            for mapping in concept["Mappings|SAME-AS"].split(";"):
                 if mapping:
                     mapping_parts = mapping.split(":")
                     if mapping_parts[0] == CONCEPT_KEY_MAPPING:
                         concept["_mapping:" + mapping_parts[0]] = mapping_parts[1]
             if "_mapping:" + CONCEPT_KEY_MAPPING not in concept:
-                raise IndexError("The following concept does not have a mapping for source '" + CONCEPT_KEY_MAPPING + "': " + str(concept))
+                raise IndexError(
+                    "The following concept does not have a non-retired mapping for source '"
+                    + CONCEPT_KEY_MAPPING
+                    + "': "
+                    + str(concept)
+                )
 
 
 def get_all_concepts_in_tree(all_concepts: list, set_name: str) -> list:
-    """ Filters a list of concepts for decendants of set_name
+    """Filters a list of concepts for decendants of set_name
 
     "Descendants" means answers and set members (or members of members, etc.)
     """
@@ -368,7 +422,7 @@ def exclude(concepts: List[OrderedDict], excludes: List[str]) -> List[OrderedDic
 
 
 def detect_cycles(concepts: List[OrderedDict]):
-    """ Throws an exception if concepts reference each other cyclically """
+    """Throws an exception if concepts reference each other cyclically"""
     key = get_key()
     all_concepts_by_name = {c[key]: c for c in concepts}
 
@@ -410,7 +464,7 @@ def detect_cycles(concepts: List[OrderedDict]):
 
 
 def move_referring_concepts_down(concepts: list, key: str) -> list:
-    """ Moves concepts below their answers or set members
+    """Moves concepts below their answers or set members
 
     Precondition: concepts must be free of cycles
     """
@@ -444,7 +498,7 @@ def move_referring_concepts_down(concepts: list, key: str) -> list:
 
 
 def run_sql(sql_code: str) -> str:
-    """ Connects to the database and runs the given SQL code.
+    """Connects to the database and runs the given SQL code.
 
     Globals:
         DB_NAME: str
@@ -507,32 +561,41 @@ def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
 
 
 def squish_name(name: str):
-    """ Takes a string with spaces and makes it more appropriate for a filename """
+    """Takes a string with spaces and makes it more appropriate for a filename"""
     return name.replace(" ", "-")
 
 
 def get_key():
-    return "_mapping:" + CONCEPT_KEY_MAPPING if CONCEPT_KEY_MAPPING else "Fully specified name:" + DEFAULT_LOCALE
+    return (
+        "_mapping:" + CONCEPT_KEY_MAPPING
+        if CONCEPT_KEY_MAPPING
+        else "Fully specified name:" + DEFAULT_LOCALE
+    )
 
 
-def get_columns(
-    name_types: List[str], concepts: List[OrderedDict]
-) -> List[str]:
+def get_columns(name_types: List[str], concepts: List[OrderedDict]) -> List[str]:
     names = name_column_headers(name_types)
-    keys = (
+    initial_keys = (
         ["uuid", "Void/Retire"]
         + names
         + [
-            "Description:en",
+            "Description:" + DEFAULT_LOCALE,
             "Data class",
             "Data type",
             "Answers",
             "Members",
-            "Same as mappings",
         ]
     )
-    other_keys = [k for k in concepts[0].keys() if k not in keys and not k.startswith("_mapping")]
-    return keys + other_keys
+    other_keys = [
+        k
+        for k in concepts[0].keys()
+        if k not in initial_keys and not k.startswith("_mapping")
+    ]
+    all_keys = initial_keys + other_keys
+    filtered_keys = [
+        k for k in all_keys if k == "Void/Retire" or any([c[k] for c in concepts])
+    ]
+    return filtered_keys
 
 
 def name_column_headers(name_types: List[str]) -> List[str]:
@@ -578,7 +641,6 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--version",
-        type=float,
         default=VERSION,
         help="The OpenMRS database/platform version.",
     )

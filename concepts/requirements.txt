@@ -1,5 +1,8 @@
 mypy
+pre-commit
 pylint
 pytest
 pytest-watch
 ipdb
+packaging
+
