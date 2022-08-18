@@ -22,10 +22,11 @@ CSVs that can be loaded by the OpenMRS Initializer module.
 # Globals -- modified only during initialization
 VERBOSE = False
 DOCKER = False
+DOCKER_CONTAINER = "openmrs-sdk-mysql"
 VERSION = "2.3"
 LOCALES = ["en"]
 DEFAULT_LOCALE = "en"
-ENCODING = "UTF-8"
+ENCODING = "unicode_escape"
 CONCEPT_KEY_MAPPING: Optional[str] = None
 MAPPING_TYPES: List[str] = [
     "SAME-AS",
@@ -59,6 +60,7 @@ def set_globals(
     database: str,
     verbose: bool = VERBOSE,
     docker: bool = DOCKER,
+    docker_container: str = DOCKER_CONTAINER,
     runtime_properties_path: Optional[str] = None,
     user: Optional[str] = None,
     password: Optional[str] = None,
@@ -71,10 +73,11 @@ def set_globals(
     Initializes the global variables used in this script.
     Defaults are as described in `concept_csv_export.py --help`.
     """
-    global VERBOSE, DB_NAME, DOCKER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES, ENCODING, CONCEPT_KEY_MAPPING
+    global VERBOSE, DB_NAME, DOCKER, DOCKER_CONTAINER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES, ENCODING, CONCEPT_KEY_MAPPING
     VERBOSE = verbose
     DB_NAME = database
     DOCKER = docker
+    DOCKER_CONTAINER = docker_container
     VERSION = version
     LOCALES = locales
     DEFAULT_LOCALE = locales[0]
@@ -106,6 +109,7 @@ def main(
     database: str,
     set_name: Optional[str],
     docker: bool = DOCKER,
+    docker_container:str = DOCKER_CONTAINER,
     locales: list = LOCALES,
     name_types: list = NAME_TYPES_DEFAULT,
     outfile: str = "",  # default is set in the function
@@ -122,6 +126,7 @@ def main(
         database=database,
         verbose=verbose,
         docker=docker,
+        docker_container=docker_container,
         runtime_properties_path=runtime_properties_path,
         user=user,
         password=password,
@@ -521,7 +526,7 @@ def run_sql(sql_code: str) -> str:
 
     if DOCKER:
         container_id = get_command_output(
-            "docker ps | grep openmrs-sdk-mysql | cut -f1 -d' '"
+            "docker ps | grep {} | cut -f1 -d' '".format(DOCKER_CONTAINER)
         )
         command = "docker exec {} {}".format(container_id, command)
 
@@ -637,7 +642,13 @@ if __name__ == "__main__":
         "--docker",
         action="store_true",
         default=DOCKER,
-        help="Whether the OpenMRS MySQL database is dockerized. The container must be named 'openmrs-sdk-mysql'.",
+        help="Whether the OpenMRS MySQL database is dockerized.",
+    )
+    parser.add_argument(
+        "-dc",
+        "--docker-container",
+        default=DOCKER_CONTAINER,
+        help="Name of docker container where the OpenMRS MySQL database is dockerized. Defaults to 'openmrs-sdk-mysql'.",
     )
     parser.add_argument(
         "--version",
@@ -695,6 +706,7 @@ if __name__ == "__main__":
         outfile=args.outfile,
         verbose=args.verbose,
         docker=args.docker,
+        docker_container=args.docker_container,
         locales=args.locales.split(","),
         name_types=args.name_types.split(","),
         user=args.user,
