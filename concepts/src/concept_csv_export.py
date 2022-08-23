@@ -24,24 +24,47 @@ VERBOSE = False
 DOCKER = False
 DOCKER_CONTAINER = "openmrs-sdk-mysql"
 VERSION = "2.3"
-LOCALES = ["en"]
-DEFAULT_LOCALE = "en"
+LOCALES = ["en","es"]
+DEFAULT_LOCALE = "es"
 ENCODING = "unicode_escape"
 CONCEPT_KEY_MAPPING: Optional[str] = None
 MAPPING_TYPES: List[str] = [
     "SAME-AS",
     "NARROWER-THAN",
-    "BROADER-THAN",
-    "Associated finding",
-    "Associated morphology",
-    "Associated procedure",
-    "Associated with",
-    "Causative agent",
-    "Finding site",
-    "Has specimen",
-    "Laterality",
-    "Severity",
-]  # taken from Version 1 of https://wiki.openmrs.org/pages/viewpage.action?pageId=235276418
+    "BROADER-THAN"#,
+    #"Associated finding",
+    #"Associated morphology",
+    #"Associated with"
+]  # select name from concept_map_type where concept_map_type_id in (select distinct concept_map_type_id from concept_reference_map);
+
+CONCEPT_SOURCES: List[str] = [
+    #"3BT",
+    "PIH|Name",
+    "PIH|Number",
+    "CIEL",
+    "AMPATH",
+    #"CCAM",
+    #"FDA Route of Administration",
+    #"HL-7 CVX",
+    #"HL7 2.x Route of Administration",
+    "ICD-10-WHO",
+    "ICD-10-WHO 2nd",
+    "ICD-11-WHO",
+    #"ICPC2",
+    #"IMO ProblemIT",
+    #"IMO ProcedureIT",
+    "Liberia MoH",
+    "LOINC",
+    #"NCI Concept Code",
+    #"NDF-RT NUI",
+    "org.openmrs.module.emrapi",
+    "PIH Malawi",
+    "RxNORM",
+    "SES Lab",
+    "SNOMED CT",
+   # "SNOMED NP",
+    "SNOMED UK"
+]
 
 # These must be set before running run_sql
 DB_NAME = ""
@@ -266,29 +289,39 @@ def get_sql_code(name_types: list, limit: Optional[int] = None, where: str = "")
 
         return "\n    ".join(snippets)
 
-    def type_name_transform(mapping_type: str):
-        return mapping_type.replace("-", "_").replace(" ", "_")
+    def name_transform(mapping_type: str):
+        return mapping_type.replace("-", "_").replace(" ", "_").replace(".", "_").replace("|", "_")
 
-    def mapping_select_snippet(mapping_type: str):
-        return "GROUP_CONCAT(DISTINCT term_source_name_{tn}, ':', term_code_{tn} SEPARATOR ';') 'Mappings|{t}'\n".format(
-            t=mapping_type, tn=type_name_transform(mapping_type)
+    def mapping_select_snippet(mapping_type: str, concept_source: str):
+        return "GROUP_CONCAT(DISTINCT term_code_{csn}_{tn} SEPARATOR ';') 'Mappings|{t}|{cs}'\n".format(
+            t=mapping_type, tn=name_transform(mapping_type), cs=concept_source, csn=name_transform(concept_source)
         )
 
-    def mapping_join_snippet(mapping_type: str):
+    def mapping_join_snippet(mapping_type: str, concept_source: str):
+
+        datatype_clause = "";
+
+        if '|' in concept_source:
+            datatype = concept_source.split("|")[1]
+            if datatype == 'Number':
+                datatype_clause = ' WHERE CAST(crt.code as unsigned) != 0'
+            elif datatype == 'Name':
+                datatype_clause = ' WHERE CAST(crt.code as unsigned) = 0'
+
         return (
-            "LEFT JOIN (SELECT crm.concept_id, source.name term_source_name_{tn}, crt.code term_code_{tn} FROM concept_reference_map crm \n"
+            "LEFT JOIN (SELECT crm.concept_id, crt.code term_code_{csn}_{tn} FROM concept_reference_map crm \n"
             "           JOIN concept_map_type map_type ON crm.concept_map_type_id = map_type.concept_map_type_id AND map_type.name = '{t}' \n"
             "           JOIN concept_reference_term crt ON crm.concept_reference_term_id = crt.concept_reference_term_id AND crt.retired = 0 \n"
-            "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id) term_{tn} \n"
-            "   ON c.concept_id = term_{tn}.concept_id \n"
-        ).format(t=mapping_type, tn=type_name_transform(mapping_type))
+            "           JOIN concept_reference_source source ON crt.concept_source_id = source.concept_source_id and source.name = '{cs}'{dtc}) term_{csn}_{tn} \n"
+            "   ON c.concept_id = term_{csn}_{tn}.concept_id \n"
+        ).format(t=mapping_type, tn=name_transform(mapping_type), cs=concept_source.split("|")[0], csn=name_transform(concept_source), dtc=datatype_clause)
 
     select = (
         "SET SESSION group_concat_max_len = 1000000; "
-        "SELECT c.uuid, MAX(cd.description) 'Description:"
+        "SELECT c.uuid, MAX(REPLACE(REPLACE(cd.description,'\\r',''), '\\n','')) 'Description:"
         + DEFAULT_LOCALE
         + "', MAX(cl.name) 'Data class', MAX(dt.name) 'Data type', "
-        + ", ".join([mapping_select_snippet(mapping_type=t) for t in MAPPING_TYPES])
+        + ", ".join([mapping_select_snippet(mapping_type=t, concept_source=cs) for cs in CONCEPT_SOURCES for t in MAPPING_TYPES])
         + ", "
         + ", ".join(
             [locale_select_snippet(name_types=name_types, locale=l) for l in LOCALES]
@@ -326,7 +359,7 @@ def get_sql_code(name_types: list, limit: Optional[int] = None, where: str = "")
         "LEFT JOIN concept_description cd ON c.concept_id = cd.concept_id AND cd.locale = '"
         + DEFAULT_LOCALE
         + "' \n"
-        + "\n ".join([mapping_join_snippet(mapping_type=t) for t in MAPPING_TYPES])
+        + "\n ".join([mapping_join_snippet(mapping_type=t, concept_source=cs) for cs in CONCEPT_SOURCES for t in MAPPING_TYPES])
         + "\n ".join(
             [locale_join_snippet(name_types=name_types, locale=l) for l in LOCALES]
         )
@@ -525,10 +558,7 @@ def run_sql(sql_code: str) -> str:
     )
 
     if DOCKER:
-        container_id = get_command_output(
-            "docker ps | grep {} | cut -f1 -d' '".format(DOCKER_CONTAINER)
-        )
-        command = "docker exec {} {}".format(container_id, command)
+        command = "docker exec {} {}".format(DOCKER_CONTAINER, command)
 
     return get_command_output(command)
 
@@ -562,6 +592,7 @@ def sql_result_to_list_of_ordered_dicts(sql_result: str) -> list:
     sql_lines = [
         l.replace(newline_replacement, newline_text) for l in sql_result.splitlines()
     ]
+
     return list(csv.DictReader(sql_lines, delimiter="\t"))
 
 
@@ -693,6 +724,7 @@ if __name__ == "__main__":
         default=ENCODING,
         help="The encoding to use for reading output from commands, including results from the MySQL database.",
     )
+    # TODO: does this still work?
     parser.add_argument(
         "-k",
         "--concept-key-mapping",
