@@ -392,12 +392,10 @@ def get_sql_code(name_types: list, limit: Optional[int] = None, where: str = "")
 def append_key_mapping(all_concepts: list):
     if CONCEPT_KEY_MAPPING:
         for concept in all_concepts:
-            for mapping in concept["Mappings|SAME-AS"].split(";"):
-                if mapping:
-                    mapping_parts = mapping.split(":")
-                    if mapping_parts[0] == CONCEPT_KEY_MAPPING:
-                        concept["_mapping:" + mapping_parts[0]] = mapping_parts[1]
-            if "_mapping:" + CONCEPT_KEY_MAPPING not in concept:
+            mappings = concept["Mappings|SAME-AS|" + CONCEPT_KEY_MAPPING].split(";")
+            if mappings and mappings[0]:    # note if there are multiple mappings just take the first found
+                concept["_mapping:" + CONCEPT_KEY_MAPPING] = mappings[0]
+            else:
                 raise IndexError(
                     "The following concept does not have a non-retired mapping for source '"
                     + CONCEPT_KEY_MAPPING
@@ -733,7 +731,7 @@ if __name__ == "__main__":
         default=ENCODING,
         help="The encoding to use for reading output from commands, including results from the MySQL database.",
     )
-    # TODO: does this still work?
+    # TODO: this does not work, since the query lookup only fetches by fully_specified_name?
     parser.add_argument(
         "-k",
         "--concept-key-mapping",
