@@ -38,31 +38,20 @@ MAPPING_TYPES: List[str] = [
 ]  # select name from concept_map_type where concept_map_type_id in (select distinct concept_map_type_id from concept_reference_map);
 
 CONCEPT_SOURCES: List[str] = [
-    #"3BT",
     "PIH|Name",
     "PIH|Number",
     "CIEL",
     "AMPATH",
-    #"CCAM",
-    #"FDA Route of Administration",
-    #"HL-7 CVX",
-    #"HL7 2.x Route of Administration",
     "ICD-10-WHO",
     "ICD-10-WHO 2nd",
     "ICD-11-WHO",
-    #"ICPC2",
-    #"IMO ProblemIT",
-    #"IMO ProcedureIT",
     "Liberia MoH",
     "LOINC",
-    #"NCI Concept Code",
-    #"NDF-RT NUI",
     "org.openmrs.module.emrapi",
     "PIH Malawi",
     "RxNORM",
     "SES Lab",
     "SNOMED CT",
-   # "SNOMED NP",
     "SNOMED UK"
 ]
 
@@ -91,12 +80,14 @@ def set_globals(
     locales: list = LOCALES,
     encoding: str = ENCODING,
     concept_key_mapping: Optional[str] = CONCEPT_KEY_MAPPING,
+    mapping_types: list = MAPPING_TYPES,
+    concept_sources: list = CONCEPT_SOURCES,
 ):
     """
     Initializes the global variables used in this script.
     Defaults are as described in `concept_csv_export.py --help`.
     """
-    global VERBOSE, DB_NAME, DOCKER, DOCKER_CONTAINER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES, ENCODING, CONCEPT_KEY_MAPPING
+    global VERBOSE, DB_NAME, DOCKER, DOCKER_CONTAINER, USER, PASSWORD, VERSION, DEFAULT_LOCALE, LOCALES, ENCODING, CONCEPT_KEY_MAPPING, MAPPING_TYPES, CONCEPT_SOURCES
     VERBOSE = verbose
     DB_NAME = database
     DOCKER = docker
@@ -106,6 +97,8 @@ def set_globals(
     DEFAULT_LOCALE = locales[0]
     ENCODING = encoding
     CONCEPT_KEY_MAPPING = concept_key_mapping
+    MAPPING_TYPES = mapping_types
+    CONCEPT_SOURCES = concept_sources
 
     USER = user or get_command_output(
         'grep connection.username {} | cut -f2 -d"="'.format(
@@ -144,6 +137,8 @@ def main(
     exclude_files: List[str] = None,
     encoding: str = ENCODING,
     concept_key_mapping=CONCEPT_KEY_MAPPING,
+    mapping_types=MAPPING_TYPES,
+    concept_sources=CONCEPT_SOURCES,
 ):
     set_globals(
         database=database,
@@ -157,6 +152,8 @@ def main(
         locales=locales,
         encoding=encoding,
         concept_key_mapping=concept_key_mapping,
+        mapping_types=mapping_types,
+        concept_sources=concept_sources,
     )
     if not outfile:
         outfile = (
@@ -698,6 +695,18 @@ if __name__ == "__main__":
         help="A comma-separated list of name types for which to extract concept names.",
     )
     parser.add_argument(
+        "-m",
+        "--mapping-types",
+        default=",".join(MAPPING_TYPES),
+        help="A comma-separated list of mapping types for which to extract concept mappings",
+    )
+    parser.add_argument(
+        "-s",
+        "--concept-sources",
+        default=",".join(CONCEPT_SOURCES),
+        help="A comma-separated list of concept sources for which to extract concept maps.",
+    )
+    parser.add_argument(
         "-r",
         "--props-path",
         help="The path to the openmrs-runtime.properties file. Used for extracting username and password. Defaults to ~/openmrs/<database>/openmrs-runtime.properties.",
@@ -748,4 +757,6 @@ if __name__ == "__main__":
         exclude_files=args.exclude_files,
         encoding=args.encoding,
         concept_key_mapping=args.concept_key_mapping,
+        mapping_types=args.mapping_types.split(","),
+        concept_sources=args.concept_sources.split(","),
     )
